@@ -1,4 +1,7 @@
-# Round 1: Raw uProtocol Over Unix Domain Sockets
+# Stage 0: Raw uProtocol Over Unix Domain Sockets
+
+> Historical baseline snapshot. Crate names at this stage: `up-client`, `up-server`.
+> Stage 1 renames these binaries; see `Stage-1.md` for the current workspace layout.
 
 ## What We Built
 
@@ -194,7 +197,7 @@ up_twin_discovery/
 │       ├── Cargo.toml
 │       └── src/main.rs
 └── blog-inputs/
-    └── Round-1.md              # this file
+    └── Stage-0.md              # this file
 ```
 
 ---
@@ -205,4 +208,4 @@ up_twin_discovery/
 2. **Framing is mandatory** — without length-prefix headers, stream boundaries are ambiguous.
 3. **The payload is opaque to the transport** — the server's `unpack_bms_can_frame` is a pure application-layer concern; the framing and protobuf layers just move bytes.
 4. **End-to-end data integrity** — the client packs a BMS CAN frame with `75% SoC / 25°C`, frames it, sends it over Unix socket, and the server recovers the exact same values.
-5. **This is the baseline** — Round 2 will introduce uProtocol's topic-based addressing and discovery semantics on top of this same transport.
+5. **This is the baseline** — Stage 2 will introduce uProtocol's topic-based addressing and listener semantics on top of this same transport.

@@ -11,9 +11,9 @@ const SOCKET_PATH: &str = "/tmp/uprotocol_twin.sock";
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    println!("--- uProtocol Socket Client Starting ---");
+    println!("--- Battery telemetry publisher starting ---");
 
-    // 1. Build a source uURI for a Digital Twin service entity.
+    // 1. Build a source uURI for the battery telemetry publisher entity.
     let source_uri = UUri {
         authority_name: "local_vehicle".to_string(),
         ue_id: 0x1010,
@@ -60,8 +60,6 @@ async fn main() -> Result<(), anyhow::Error> {
 
     Ok(())
 }
-
-// In src/bin/client.rs
 
 fn pack_bms_can_frame(battery_level_pct: f32, temperature_c: i8) -> [u8; 8] {
     let mut can_data = [0u8; 8];

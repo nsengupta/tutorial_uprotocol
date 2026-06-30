@@ -11,7 +11,7 @@ async fn main() -> Result<(), anyhow::Error> {
     // Clean up dead nodes from previous runs before binding.
     let _ = std::fs::remove_file(SOCKET_PATH);
     let listener = UnixListener::bind(SOCKET_PATH)?;
-    println!("uProtocol Socket Server listening on: {}", SOCKET_PATH);
+    println!("Battery telemetry subscriber listening on: {}", SOCKET_PATH);
 
     loop {
         let (mut stream, _) = listener.accept().await?;
@@ -39,8 +39,8 @@ async fn main() -> Result<(), anyhow::Error> {
                         let (soc, temp) = unpack_bms_can_frame(&extracted_bytes);
 
                         let output = format!(
-                            "[Digital Twin Server] Processing incoming CAN telemetry stream...\n\
-                             -> State of Charge: {}%\n\
+                            "[Battery telemetry subscriber] Processing incoming CAN telemetry...\n\
+                             -> State of Charge: {:.1}%\n\
                              -> Cell Temp: {} °C",
                             soc, temp,
                         );
