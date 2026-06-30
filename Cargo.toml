@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/up-frame-codec",
+    "crates/up-server",
+    "crates/up-client",
+]
