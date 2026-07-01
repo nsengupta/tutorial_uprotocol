@@ -2,37 +2,65 @@
 
 Items to fold into the project README when it is written.
 
+## Repository layout
+
+Each tutorial chapter has a **frozen code snapshot** under `phases/`. Narrative markdown lives at the repo root. Active development for the next chapter happens in the latest phase directory; earlier phases are copy-forward snapshots and are not rewritten.
+
+| Phase directory | Chapter | Code |
+|---|---|---|
+| `phases/01_raw_sockets/` | Stage 1 | `up-frame-codec`, publisher, subscriber — UDS length-framed `UMessage` (matches tag `Stage-1-Baseline`) |
+| `phases/02_uprotocol_semantics/` | Stage 2 (WIP) | above + `up-uds-transport`; binaries still Stage 1 style until 2.7–2.8 |
+
 ## Tutorial source documents
 
-Stage-by-stage tutorial drafts live under `blog-inputs/`:
+Stage-by-stage tutorial drafts at the repo root:
 
 | File | Description |
 |---|---|
 | `Stage-0.md` | Historical baseline (`up-client` / `up-server` names) |
 | `Stage-1.md` | Renamed crates, 1:1 UDS pub/sub, architectural wall narrative |
+| `Stage-2.md` | uProtocol layers (2.1–2.3), `up-uds-transport` (2.4); binaries not refactored yet |
+| `uProtocol-tutorial-draft-1.md` | Consolidated tutorial draft (in progress) |
 
-A consolidated multi-part tutorial will be produced from these stage documents later. **`main` HEAD always accompanies the latest stage** as the workspace evolves.
+## Build and run
+
+Each phase is an independent Cargo workspace. From the repo root:
+
+```bash
+# Stage 1 — terminal 1
+cargo run --manifest-path phases/01_raw_sockets/Cargo.toml -p up-telemetry-subscriber
+
+# Stage 1 — terminal 2
+cargo run --manifest-path phases/01_raw_sockets/Cargo.toml -p up-battery-telemetry-publisher
+```
+
+```bash
+# Stage 2 workspace (includes up-uds-transport; binaries unchanged until 2.7–2.8)
+cargo build --manifest-path phases/02_uprotocol_semantics/Cargo.toml
+```
 
 ## Frozen checkpoints (git tags)
 
-Readers who want the **exact code and docs for a completed stage** should check out the matching tag instead of `main`.
+Tags mark commits when a chapter was first completed. On `main`, the matching code now lives under `phases/` (the tag may still show the pre-migration layout until re-tagged).
 
-| Tag | Stage | What it captures |
+| Tag | Stage | Phase directory |
 |---|---|---|
-| `Stage-1-Baseline` | Stage 1 | `up-battery-telemetry-publisher`, `up-telemetry-subscriber`, `up-frame-codec`; UDS length-framed `UMessage`; `blog-inputs/Stage-0.md` + `Stage-1.md` |
+| `Stage-1-Baseline` | Stage 1 | `phases/01_raw_sockets/` |
 
-```bash
-git checkout Stage-1-Baseline
-cargo run -p up-telemetry-subscriber      # terminal 1
-cargo run -p up-battery-telemetry-publisher  # terminal 2
-```
+Future stages will receive their own tags (e.g. `Stage-2-Baseline`) when shipped.
 
-Future stages will receive their own tags (e.g. `Stage-2-Baseline`) as the code structure changes.
+## Stage 2 plan (in progress — paused after 2.4)
+
+Completed: `Stage-2.md` (sections 2.1–2.4), `phases/02_uprotocol_semantics/crates/up-uds-transport`.
+
+Pending before `Stage-2-Baseline` tag: 2.5–2.6 (benefits/limits narrative), 2.7–2.8 (refactor binaries), 2.9–2.10 (evaluate + tag).
+
+See `TUTORIAL-ROADMAP.md` Phase 2 for full checklist.
 
 ## Suggested README sections (TODO)
 
 - Project purpose: beginner-friendly uProtocol tutorial for SDV engineers
-- Pointer to `blog-inputs/` for stage narratives
-- Pointer to tags for stage-frozen snapshots
-- Build/run quick start (from current HEAD or tagged stage)
+- Pointer to root `Stage-*.md` narratives and `phases/` code snapshots
+- Pointer to tags for first-publish checkpoints
+- Build/run quick start per phase
 - Link to final published tutorial (TBD)

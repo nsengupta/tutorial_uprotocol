@@ -1,7 +1,6 @@
 # Stage 0: Raw uProtocol Over Unix Domain Sockets
 
-> Historical baseline snapshot. Crate names at this stage: `up-client`, `up-server`.
-> Stage 1 renames these binaries; see `Stage-1.md` for the current workspace layout.
+> **On `main` today:** Stage 1 code lives in `phases/01_raw_sockets/` with renamed crates (`up-battery-telemetry-publisher`, `up-telemetry-subscriber`). This document retains the original `up-client` / `up-server` names.
 
 ## What We Built
 
@@ -185,19 +184,16 @@ uProtocol Socket Server listening on: /tmp/uprotocol_twin.sock
 
 ```
 up_twin_discovery/
-├── Cargo.toml                  # workspace manifest
-├── crates/
-│   ├── up-frame-codec/         # shared library
-│   │   ├── Cargo.toml
-│   │   └── src/lib.rs
-│   ├── up-server/              # server binary
-│   │   ├── Cargo.toml
-│   │   └── src/main.rs
-│   └── up-client/              # client binary
-│       ├── Cargo.toml
-│       └── src/main.rs
-└── blog-inputs/
-    └── Stage-0.md              # this file
+├── Cargo.toml
+├── Stage-0.md                 # this file
+├── Stage-1.md
+└── phases/
+    └── 01_raw_sockets/        # Stage 1 snapshot (renamed crates; see Stage-1.md)
+        ├── Cargo.toml
+        └── crates/
+            ├── up-frame-codec/
+            ├── up-battery-telemetry-publisher/   # was up-client
+            └── up-telemetry-subscriber/          # was up-server
 ```
 
 ---

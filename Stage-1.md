@@ -44,7 +44,7 @@ In Rust, `up-rust` maps the envelope to Protobuf on the wire: `UMessage::write_t
 
 ## The Subscriber — What It Does
 
-**File:** `crates/up-telemetry-subscriber/src/main.rs`
+**File:** `phases/01_raw_sockets/crates/up-telemetry-subscriber/src/main.rs`
 
 While the publisher sends, the **battery telemetry subscriber** sits on the other end of the Unix socket and reverses the process: accept a connection, pull bytes off the wire, recover the `UMessage`, then interpret the payload as raw BMS data. It does not use `UAttributes` (source URI, message type, TTL) at this stage — it reaches straight for the payload bytes.
 
@@ -105,7 +105,7 @@ Our fix — implemented in `up-frame-codec` — prepends each protobuf-encoded `
 └─────────────────────────────────────────────┘
 ```
 
-**File:** `crates/up-frame-codec/src/lib.rs`
+**File:** `phases/01_raw_sockets/crates/up-frame-codec/src/lib.rs`
 
 ```rust
 pub fn serialize_for_unix_socket(msg: &UMessage) -> Result<Vec<u8>, anyhow::Error> {
@@ -121,7 +121,7 @@ pub fn serialize_for_unix_socket(msg: &UMessage) -> Result<Vec<u8>, anyhow::Erro
 
 ## The Publisher — Building and Sending a `UMessage`
 
-**File:** `crates/up-battery-telemetry-publisher/src/main.rs`
+**File:** `phases/01_raw_sockets/crates/up-battery-telemetry-publisher/src/main.rs`
 
 The publisher constructs a `UMessage` for each of five telemetry samples, frames it, opens a fresh UDS connection, sends, and closes.
 
@@ -180,7 +180,7 @@ Notice: the publisher fills in `UMESSAGE_TYPE_PUBLISH`, a **source** `UUri`, TTL
 
 ## The Subscriber — Reading, Decoding, Unpacking
 
-**File:** `crates/up-telemetry-subscriber/src/main.rs`
+**File:** `phases/01_raw_sockets/crates/up-telemetry-subscriber/src/main.rs`
 
 The subscriber binds to the socket path, accepts connections, and spawns a task per connection. Each task reverses the framing steps:
 
@@ -296,13 +296,15 @@ Five messages are sent; the publisher then exits. The subscriber keeps running, 
 ```
 up_twin_discovery/
 ├── Cargo.toml
-├── crates/
-│   ├── up-frame-codec/
-│   ├── up-battery-telemetry-publisher/
-│   └── up-telemetry-subscriber/
-└── blog-inputs/
-    ├── Stage-0.md    # historical baseline (original crate names)
-    └── Stage-1.md    # this file
+├── Stage-0.md
+├── Stage-1.md                 # this file
+└── phases/
+    └── 01_raw_sockets/
+        ├── Cargo.toml         # phase workspace
+        └── crates/
+            ├── up-frame-codec/
+            ├── up-battery-telemetry-publisher/
+            └── up-telemetry-subscriber/
 ```
 
 ---

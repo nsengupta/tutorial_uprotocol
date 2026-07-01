@@ -1,7 +1,16 @@
-[workspace]
-resolver = "2"
-members = [
-    "crates/up-frame-codec",
-    "crates/up-telemetry-subscriber",
-    "crates/up-battery-telemetry-publisher",
-]
+[package]
+name = "up-twin-discovery"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "uProtocol car-twin tutorial — each chapter is a phase workspace under phases/"
+
+# Build a chapter (from repo root):
+#
+#   cargo build --manifest-path phases/01_raw_sockets/Cargo.toml
+#   cargo run   --manifest-path phases/01_raw_sockets/Cargo.toml -p up-telemetry-subscriber
+#   cargo run   --manifest-path phases/01_raw_sockets/Cargo.toml -p up-battery-telemetry-publisher
+#
+#   cargo build --manifest-path phases/02_uprotocol_semantics/Cargo.toml
+#
+# See README-Notes.md for chapter ↔ phase mapping.

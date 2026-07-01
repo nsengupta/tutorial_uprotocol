@@ -1,4 +1,5 @@
 /target
+/phases/*/target
 .ralph/
 .ralph/checkpoint-worktree
 
