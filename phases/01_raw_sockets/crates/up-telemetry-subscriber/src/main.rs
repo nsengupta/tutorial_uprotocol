@@ -1,8 +1,8 @@
-use tokio::net::UnixListener;
 use tokio::io::AsyncReadExt;
-use up_rust::UMessage;
-use protobuf::Message;
+use tokio::net::UnixListener;
 use std::io::{Write, stdout};
+
+use up_frame_codec::deserialize_for_unix_socket;
 
 const SOCKET_PATH: &str = "/tmp/uprotocol_twin.sock";
 
@@ -18,21 +18,24 @@ async fn main() -> Result<(), anyhow::Error> {
 
         // Spawn a dedicated task for each incoming socket connection.
         tokio::spawn(async move {
-            // Step A: Read length prefix header (4 Bytes).
+            // Step A: Read length prefix header (4 bytes).
             let mut len_bytes = [0u8; 4];
             if stream.read_exact(&mut len_bytes).await.is_err() {
                 return;
             }
-            let expected_len = u32::from_be_bytes(len_bytes) as usize;
+            let body_len = u32::from_be_bytes(len_bytes) as usize;
 
             // Step B: Read matching body bytes based on length header.
-            let mut body_bytes = vec![0u8; expected_len];
+            let mut body_bytes = vec![0u8; body_len];
             if stream.read_exact(&mut body_bytes).await.is_err() {
                 return;
             }
 
-            // Step C: Reconstruct uProtocol semantics by decoding the stream bytes.
-            match UMessage::parse_from_bytes(&body_bytes[..]) {
+            // Step C: Reassemble the framed payload and decode via the codec.
+            let mut framed = len_bytes.to_vec();
+            framed.extend_from_slice(&body_bytes);
+
+            match deserialize_for_unix_socket(&framed) {
                 Ok(u_message) => {
                     if let Some(payload_data) = u_message.payload.as_ref() {
                         let extracted_bytes: Vec<u8> = payload_data.clone().into();

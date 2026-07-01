@@ -26,19 +26,73 @@ Stage-by-stage tutorial drafts at the repo root:
 
 ## Build and run
 
-Each phase is an independent Cargo workspace. From the repo root:
+Each phase is an independent Cargo workspace. Run all commands **from the repo root** unless noted.
+
+General pattern:
 
 ```bash
-# Stage 1 — terminal 1
+cargo build   --manifest-path phases/<NN>_<name>/Cargo.toml
+cargo run     --manifest-path phases/<NN>_<name>/Cargo.toml -p <package-name>
+cargo test    --manifest-path phases/<NN>_<name>/Cargo.toml -p <package-name>
+```
+
+### Phase 01 — `phases/01_raw_sockets/` (Stage 1)
+
+Build the whole workspace:
+
+```bash
+cargo build --manifest-path phases/01_raw_sockets/Cargo.toml
+```
+
+Run the demo (two terminals; subscriber first):
+
+```bash
+# Terminal 1 — subscriber (waits for publisher)
 cargo run --manifest-path phases/01_raw_sockets/Cargo.toml -p up-telemetry-subscriber
 
-# Stage 1 — terminal 2
+# Terminal 2 — publisher (sends 5 messages, then exits)
 cargo run --manifest-path phases/01_raw_sockets/Cargo.toml -p up-battery-telemetry-publisher
 ```
 
+Build or run a single crate:
+
 ```bash
-# Stage 2 workspace (includes up-uds-transport; binaries unchanged until 2.7–2.8)
+cargo build --manifest-path phases/01_raw_sockets/Cargo.toml -p up-frame-codec
+cargo build --manifest-path phases/01_raw_sockets/Cargo.toml -p up-telemetry-subscriber
+cargo build --manifest-path phases/01_raw_sockets/Cargo.toml -p up-battery-telemetry-publisher
+```
+
+### Phase 02 — `phases/02_uprotocol_semantics/` (Stage 2, WIP)
+
+Build the whole workspace:
+
+```bash
 cargo build --manifest-path phases/02_uprotocol_semantics/Cargo.toml
+```
+
+Run the demo (binaries still use Stage 1 style until sections 2.7–2.8):
+
+```bash
+# Terminal 1
+cargo run --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-telemetry-subscriber
+
+# Terminal 2
+cargo run --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-battery-telemetry-publisher
+```
+
+Test the Stage 2 transport crate:
+
+```bash
+cargo test --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-uds-transport
+```
+
+Build individual crates:
+
+```bash
+cargo build --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-frame-codec
+cargo build --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-uds-transport
+cargo build --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-telemetry-subscriber
+cargo build --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-battery-telemetry-publisher
 ```
 
 ## Frozen checkpoints (git tags)

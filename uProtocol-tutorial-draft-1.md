@@ -22,6 +22,11 @@ Mention that info may be incomplete or incorrect; I am looking for help to fix t
 
 ----
 
+#TODO - Explain the phases/sections that exist in code, corresponding to the chapters in this 
+tutorial
+
+### Chaper (Phase) 1
+
 ### What shall we build
 
 We will build a small application using uProtocol's up-rust (link here) implementation. Along the 
@@ -31,8 +36,8 @@ in the appropriate _conceptual_ place.
 The application is simple. There exists:
 
 -   An application that can send out ( _publish_ ) two pieces a car's battery telemetry: 
-    (a) State-of-charge and (b) Temperature
--   An application that can read these values and print
+    (a) State-of-charge and (b) Temperature; in the code, this is `battery-telemetry-publisher`
+-   An application that can read these values and print; in the code, this is `telemetry-subscriber`
 
 Each application runs in its own address-space (two different processes, run from separate 
 shells on my Linux machine). 
@@ -125,4 +130,73 @@ forwarding a stream; the start and end of a message is not interpreted. So, we h
 for marking these two. One standard way to achieve this is to prefix the buffer with its length. 
 The length is an integer (4 bytes); so the receiving application, can read the length first 4 
 bytes, and then read _that many_ bytes from the buffer that arrived. 
+
+In the publisher side
+```rust
+pub fn serialize_for_unix_socket(msg: &UMessage) -> Result<Vec<u8>, anyhow::Error> {
+    let envelope_bytes = msg.write_to_bytes()?;
+    let msg_len = envelope_bytes.len() as u32;
+    let mut framed_buffer = msg_len.to_be_bytes().to_vec();
+    framed_buffer.append(&mut envelope_bytes.to_vec()); // Length is prefixed
+
+    Ok(framed_buffer)
+}
+```
+Conversely, in the subscriber side:
+```rust
+pub fn deserialize_for_unix_socket(framed: &[u8]) -> Result<UMessage, anyhow::Error> {
+    if framed.len() < 4 {
+        anyhow::bail!("framed buffer too short for length prefix");
+    }
+
+    let body_len = u32::from_be_bytes(framed[0..4].try_into()?) as usize;
+    let end = 4 + body_len;
+    if framed.len() < end {
+        anyhow::bail!("framed buffer too short for declared body length");
+    }
+
+    Ok(UMessage::parse_from_bytes(&framed[4..end])?)
+}
+```
+
+When we run the applications:
+
+```shell
+--- Battery telemetry publisher starting ---
+Message 1: SoC = 76.6%, Temp = 24°C
+   Sent 67 bytes.
+
+Message 2: SoC = 77.9%, Temp = 23°C
+   Sent 67 bytes.
+
+Message 3: SoC = 76.6%, Temp = 21°C
+   Sent 67 bytes.
+
+Message 4: SoC = 75.3%, Temp = 20°C
+   Sent 67 bytes.
+
+Message 5: SoC = 78.3%, Temp = 22°C
+   Sent 67 bytes.
+
+```
+
+```shell
+Battery telemetry subscriber listening on: /tmp/uprotocol_twin.sock
+[Battery telemetry subscriber] Processing incoming CAN telemetry...
+-> State of Charge: 76.5%
+-> Cell Temp: 24 °C
+[Battery telemetry subscriber] Processing incoming CAN telemetry...
+-> State of Charge: 77.5%
+-> Cell Temp: 23 °C
+[Battery telemetry subscriber] Processing incoming CAN telemetry...
+-> State of Charge: 76.5%
+-> Cell Temp: 21 °C
+[Battery telemetry subscriber] Processing incoming CAN telemetry...
+-> State of Charge: 75.0%
+-> Cell Temp: 20 °C
+[Battery telemetry subscriber] Processing incoming CAN telemetry...
+-> State of Charge: 78.0%
+-> Cell Temp: 22 °C
+
+```
 
