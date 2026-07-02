@@ -48,7 +48,7 @@ Demonstrate to the Eclipse SDV community and advanced systems engineers that uPr
   - `register_listener` / `unregister_listener` — source/sink URI filters → `UListener::on_receive`
   - Bridge: read framed bytes → `UMessage::parse_from_bytes` → filter match → callback
 
-- [ ] **2.5 Document benefits of `up-uds-transport` (in Stage-2.md):**
+- [x] **2.5 Document benefits of `up-uds-transport` (in Stage-2.md):**
   - Application code speaks **`UTransport` + `UListener`** — not raw `read_exact` loops
   - Publisher/subscriber **contracts** expressed via URI filters, not implicit "whatever is on the socket"
   - **Same abstraction surface** as production transports (`LocalTransport` today, Zenoh in Stage 3) — business logic won't need rewriting

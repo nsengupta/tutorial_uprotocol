@@ -204,17 +204,129 @@ cargo test --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-uds-tr
 
 ---
 
-## What comes next (2.5 onward — not in this checkpoint)
+## 2.5 — Why `up-uds-transport` is worth the refactor
+
+Section 2.4 gave you the mechanics. This section answers the **so what**: why introduce a transport crate at all, when Stage 1 already “worked”?
+
+The short answer: Stage 1 proved uProtocol **bytes** move over a socket. Stage 2 proves uProtocol **semantics** can sit in front of the wire — and that your application code can target a **stable L1 API** instead of re-implementing sockets in every binary.
+
+### Benefit 1 — Application code speaks `UTransport` + `UListener`, not socket loops
+
+In Stage 1, the subscriber’s `main` is a transport program in disguise:
+
+```
+accept → read_exact(4) → read_exact(N) → parse_from_bytes → application logic
+```
+
+The publisher’s `main` is the mirror image: build message → frame → connect → write → close. Both binaries embed **how** bytes move.
+
+With `up-uds-transport`, that I/O choreography moves behind two familiar L1 entry points:
+
+| Role | Stage 1 (today’s binaries) | Stage 2 target (2.7–2.8) |
+|---|---|---|
+| **Send** | Manual `UnixStream::connect` + `write_all` | `UTransport::send(message)` via `UdsTransportClient` |
+| **Receive** | Manual `read_exact` loop in a spawned task | `UListener::on_receive(message)` after `register_listener` |
+
+Your battery telemetry logic should care about **SoC and temperature**, not about whether the next four bytes are a Big-Endian length prefix. `UListener::on_receive` is the hook where that separation becomes real: the callback receives an already-decoded `UMessage`; socket reads and framing stay in the transport crate.
+
+This matches how production uProtocol stacks are structured: entities implement listeners; transports move messages and invoke matching callbacks.
+
+### Benefit 2 — Contracts are URI filters, not “whatever arrives on the socket”
+
+Stage 1’s subscriber accepts **every** framed message on `/tmp/uprotocol_twin.sock`. There is no declared interest — if another process connected and sent bytes, the subscriber would try to decode them. The only “filter” is accidental: one publisher, one socket, one demo.
+
+`up-uds-transport` makes the contract **explicit**. A listener registers with:
+
+- a **source URI filter** (which publisher / resource / event it cares about), and
+- an optional **sink URI filter** (for request/response patterns; `None` for our PUBLISH-only demo).
+
+Dispatch uses the same matching rules as `up-rust`’s in-process `LocalTransport`:
+
+```rust
+// Simplified from up-uds-transport — dispatch only fires matching listeners
+if registered.matches_msg(&message) {
+    registered.on_receive(message.clone()).await;
+}
+```
+
+A listener fires when `source_filter.matches(message.source)` and the sink side aligns. That means:
+
+- The **thermal logging engine** from Stage 1’s thought experiment could register its **own** filter URI without sharing the battery subscriber’s code path — *once* fan-out exists at the transport layer (Stage 3).
+- Even today, registering filters documents **intent**: “I subscribe to resource `0x8001` from entity `0x1010`,” not “I read whatever bytes show up.”
+
+Stage 1 metadata (`UAttributes`, source `UUri`) was set but ignored on receive. The transport layer now **uses** that metadata for routing decisions.
+
+### Benefit 3 — Same abstraction surface as production transports
+
+`UTransport` is not a tutorial-only interface. It is the uProtocol L1 boundary in `up-rust` — the same trait implemented by:
+
+- **`LocalTransport`** — in-process dispatch (used in tests and embedded scenarios)
+- **Zenoh / MQTT / SOME/IP transports** — in full vehicle stacks (Stage 3 preview)
+
+Our `UdsTransport` / `UdsTransportClient` are **another implementation of the same trait**. That is deliberate pedagogy: code written against `UTransport::send` and `register_listener` does not need to change when the wire underneath changes.
+
+```
+Stage 2 (this chapter)          Stage 3 (preview)
+─────────────────────          ─────────────────
+UdsTransportClient      →      Zenoh-backed UTransport
+UdsTransport::serve     →      (same register_listener API)
+        │                                │
+        └──────── UTransport trait ──────┘
+                 business logic unchanged
+```
+
+When we swap UDS for Zenoh, the publisher’s publish loop and the subscriber’s `on_receive` body should remain **semantically identical** — only configuration (transport plugin, endpoint) changes. Stage 1’s raw-socket code would not survive that swap without a rewrite.
+
+### Benefit 4 — Transport concerns live in one crate, not in every binary
+
+Stage 1 spreads transport knowledge across three places:
+
+| Concern | Where it lives in Stage 1 |
+|---|---|
+| Length-prefix framing (send) | `up-frame-codec` + publisher `main` |
+| Length-prefix framing (receive) | subscriber `main` (read loop + reassembly) |
+| Socket bind / accept / connect | subscriber / publisher `main` |
+| `UMessage` protobuf decode | subscriber `main` |
+| URI-based dispatch | *nowhere* |
+
+Stage 2 consolidates the **receive-side pipeline** in `up-uds-transport`:
+
+```
+Unix socket  →  read_framed_message  →  UMessage  →  filter match  →  UListener
+                     ▲
+                     └── uses up-frame-codec on send; parallel read/decode path on receive
+```
+
+Framing on **send** already goes through `serialize_for_unix_socket` in `up-frame-codec`. The transport crate completes the picture on **receive** and adds **listener dispatch** — concerns that do not belong in battery telemetry business logic.
+
+After 2.7–2.8, the binaries shrink to:
+
+- **Publisher:** build payload + call `send` (via L2 `SimplePublisher` helper).
+- **Subscriber:** implement `on_receive`, register a filter once at startup.
+
+Fix a framing bug once in `up-uds-transport` (or `up-frame-codec`), not in every application.
+
+### What 2.5 does *not* claim
+
+These benefits are about **API shape and separation of concerns** — not about solving Stage 1’s fan-out problem yet. We still have one socket, one subscriber process, and point-to-point UDS. Section **2.6** documents honestly where this design stops short and why Stage 3 needs a different wire.
+
+### Checkpoint reminder
+
+At **2.5**, the transport crate embodies these benefits, but the **demo binaries still run Stage 1 code**. Sections **2.7–2.8** wire the publisher and subscriber to `UdsTransport` so the running application matches the architecture described here.
+
+---
+
+## What comes next (2.6 onward)
 
 | TODO | Topic |
 |---|---|
-| **2.5–2.6** | Tutorial: benefits of `up-uds-transport` + honest limits (fan-out, filesystem path, no L3) → Stage 3 setup |
+| **2.6** | Tutorial: honest limits of `up-uds-transport` (fan-out, filesystem path, no L3) → Stage 3 setup |
 | **2.7** | Refactor publisher: `SimplePublisher`, protobuf BMS payload, `UdsTransportClient` |
 | **2.8** | Refactor subscriber: `UListener`, `UdsTransport::serve`, drop manual read loop |
 | **2.9–2.10** | Intermediate evaluation, tag `Stage-2-Baseline`, update `README-Notes.md` |
 
 ---
 
-## Key takeaway at 2.4
+## Key takeaway at 2.5
 
-We now have a **real L1 transport crate** that speaks `UTransport` instead of raw sockets — but the demo binaries still run as Stage 1 until we wire them in. That separation lets us review the abstraction before refactoring application logic.
+`up-uds-transport` is not extra boilerplate — it is the **uProtocol L1 seam** between “move bytes on a Unix socket” and “battery telemetry logic.” It gives you **`UTransport` + `UListener`**, **URI-filter contracts**, **production-parity APIs**, and **one place to own wire concerns**. The demo still runs as Stage 1 until 2.7–2.8; the *architecture* you are building toward is already visible in the crate.

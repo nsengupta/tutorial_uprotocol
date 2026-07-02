@@ -25,7 +25,7 @@ Mention that info may be incomplete or incorrect; I am looking for help to fix t
 #TODO - Explain the phases/sections that exist in code, corresponding to the chapters in this 
 tutorial
 
-### Chaper (Phase) 1
+### Chapter 1
 
 ### What shall we build
 
@@ -80,7 +80,7 @@ rs/up-rust/latest/up_rust/communication/struct.UPayload.html) for this.
                         UPayloadFormat::UPAYLOAD_FORMAT_RAW   // Indication that it is a RAW buffer
                     );
 ```
-Just the payload is incomplete. We have to prepare a message that holds it (the envelope). 
+Just the payload is incomplete. We have to prepare a message (the envelope) that holds it . 
 uProtocol provides a type for this as well: [UMessage](https://docs.rs/up-rust/latest/up_rust/struct.UMessage.html). 
 
 ```rust
@@ -93,17 +93,17 @@ uProtocol provides a type for this as well: [UMessage](https://docs.rs/up-rust/l
 Without the attributes, the `UMessage` cannot be formed. We make use of this type: [UAttributes](https://docs.rs/up-rust/latest/up_rust/struct.UAttributes.html).
 
 ```rust
-let attributes = UAttributes {
-                    // Every instance of a UMessage needs an unique ID
-                    id: MessageField::from(Some(up_rust::UUID::build())),
-                    // Necessary for this application; we will explore more, later in the tutorial
-                    type_: UMessageType::UMESSAGE_TYPE_PUBLISH.into(),
-                    // Complete information of where is this message prepared; see below
-                    source: Some(source_uri.clone()).into(),
-                    // How long is the message going to leave? We will explore more, later in the tutorial
-                    ttl: Some(5000),
-                    ..Default::default()
-        };
+        let attributes = UAttributes {
+                            // Every instance of a UMessage needs an unique ID
+                            id: MessageField::from(Some(up_rust::UUID::build())),
+                            // Necessary for this application; we will explore more, later in the tutorial
+                            type_: UMessageType::UMESSAGE_TYPE_PUBLISH.into(),
+                            // Complete information of where is this message prepared; see below
+                            source: Some(source_uri.clone()).into(),
+                            // How long is the message going to leave? We will explore more, later in the tutorial
+                            ttl: Some(5000),
+                            ..Default::default()
+                        };
 ```
 
 `source` is a mandatory field of `UAttributes`. It folds in a `UUri` which is a corenerstone of 
@@ -118,7 +118,7 @@ the whole uProtocol landscape. Again, we make use of a [UUri](https://docs.rs/up
                         ..Default::default()
                      };
 ```
-We will revisit the fields of this type, later.
+We will revisit the fields of these types, later.
 
 Now that 'what' part is done (more or less, a little remains; we will soon see), the next part 
 to deal with is 'how'.
@@ -200,3 +200,198 @@ Battery telemetry subscriber listening on: /tmp/uprotocol_twin.sock
 
 ```
 
+So, there we are. A uProtocol Message has been shared between two applications using a 
+OS-provided transport facility. 
+
+One important inference that we can draw is that uProtocol's types and operations are **completely 
+independent** of the transport facility that is used to  move the messages. We will revisit this 
+aspect in the next sections.
+
+----
+
+### Chapter 2
+
+Let's take a good look at types that uProtocol gives us.
+
+This is what we have seen:
+
+- For transporting a `uPayload`, we need to put it in an envelop of a `uMessage`. 
+- An `uMessage` envelope requires a `uAttributes` also.
+- An `uAttributes` is comprised of an `UUri` (and other elements)
+- An `UUri` carries a set of important meta-information
+
+```
+╔═══════════╗
+║   UUri    ║
+╚═══════════╝
+```
+
+
+To understand what `UUri` stands for, let's take a look at how uProtocol identifies a particular 
+piece of software component/service anywhere in the car. To refer to State-of-Charge of a 
+Battery subsystem, uProtocol allows us to say:
+
+```shell
+    //up/local_vehicle/powertrain.battery/1/battery_soc
+```
+
+This is a properly-formed URI. The table explains each '/' separated component of the string:
+
+(TODO: convert the following CSV snippet to a proper table)
+
+Field,Code Property,Human-Readable Name
+Scheme,up,{This is a uProtocol-specific URI}
+Authority,authority_name,local_vehicle
+uEntity,ue_id,powertrain.battery
+Version,ue_version_major,1
+uResource,resource_id,battery_soc
+
+Note: A _[uEntity](https://github.com/eclipse-uprotocol/up-spec/blob/main/basics/README.adoc#uentity)_ (uProtocol software entity ) is a piece of software deployed somewhere on a network 
+host (in our case, the car itself). uEntities are uniquely identified within a system by means of 
+the type and version of the service interface that they implement.
+
+The human-readable URI above, is easy to understand and extremely useful in situations like 
+diagnostics. For any other uEntity, this stringified URI is an umambiguous reference to a piece 
+of data, made available by the uEntity identifiable as _powertrain.battery_. 
+
+But, uProtocol doesn't pass around such an arbitrary-length string. Instead, uProtocol provides 
+a type name `UUri`, which carries the same information but in a more compact, wire-ready, 
+micro-URI:
+```rust
+    UUri {
+        authority_name: "local_vehicle".to_string(), // The deployment context; who, from where, is providing this 
+        ue_id: 0x1010,                               // The unique ID for this uEntity; who 'owns' it
+        ue_version_major: 1,                         // API Major Version
+        resource_id: 0x8001,                         // Unique ID for this Telemetry resource
+        ..Default::default()
+    };
+```
+Same information, in fewer bytes, that can be transported.
+
+**Are those IDs arbitrary**? No, those are not. Those are _Car-level constants_ !
+
+Let's start with _Authority_. It is the root of a tree holding specific resources, laying out a 
+_namespace_; just like, 'github.com' defines the root of all resources held in that server. In the seeminly endless 
+Internet, if I want to reach a particular source code of mine, I can type in 'www.github.com/nsengupta/personal_project/...' on the browser. The DNS finds where that 'github.com' 
+physically is and hands the HTTP request to it. In the same vain, in a SDV-run car, the 
+_Authority_ can hold values like "central_compute", or "front_left_zone", or "telematics_store". 
+In the entire car, there can be only one "central_compute" or "front_left_zone"; just like in the 
+entire Internet, there can be only one 'github.com'!
+
+Inside the _Authority_, there can be more than one uEntities. For example, inside 
+'front_left_zone', there may exist 'head-lamp' and 'wheel'. Each of these is assigned its own 
+_ue_id_ ; for example, `0x1010` may denote front-left-head-lamp and `0x101F` may denote 
+front-left-wheel.
+
+A given uEntity, may hold one or more _resource_(s); the head-lamp may hold a 'switched_on' and 
+'current_lux'; the wheel may hold 'tyre_pressure' only. Each such resource has its own 
+_resource_id_ ; for example, 'tyre_pressure' may have _resource_id_ of `0xA010` and 
+'switched_on' may have _resource_id_ `0x8001` .
+
+So, in order inform any uEntity, if the head-lamp in the front-left of the car is ON, the 
+`URI` will be:
+
+```shell
+//up/my_own_car/front_head_lamp.left/v1/is_on
+```
+
+In the code, the corresponding `UUri` will be:
+
+```rust
+    UUri {
+        authority_name: "my_own_car".to_string(),
+        ue_id: 0x1010,                  // UE_ID of front-left-head.-lamp
+        ue_version_major: 1,            // API Major Version
+        resource_id: 0x8001,            // RESOURCE_ID of is_on
+        ..Default::default()
+    };
+```
+
+```rust
++--
+|
+| Rules exist to assign _uEntity_ IDs. Read more about assignment of IDs to uEntities [here]
+(https://github.com/eclipse-uprotocol/up-spec/blob/ffca0bc3caf52dec69ea89a24991483a6fd49b47/up-l3/README.adoc#31-uentity-id-ranges).
+|
++--
+```
+
+```
+╔══════════════════╗
+║   UAttributes    ║
+╚══════════════════╝
+```
+_UAttributes_ play a very important role in _uProtocol_'s design. It 
+- tells the world, what is the purpose of the message, 
+- hints at the contents of the message
+- augments the up-stream routing logic of the transporters
+
+From the code:
+
+```rust
+    let attributes = UAttributes {
+            // Every message's uniqueness
+            id: MessageField::from(Some(up_rust::UUID::build())),
+            // Hint to the transporters, about the purpose of this message (routing logic)
+            type_: UMessageType::UMESSAGE_TYPE_PUBLISH.into(),
+            // Where this message is originating from
+            source: Some(source_uri.clone()).into(),
+            ttl: Some(5000),
+            ..Default::default()
+        };
+```
+
+The complete data-model for _UAttributes_ is [here](https://docs.rs/up-rust/latest/up_rust/struct.UAttributes.html). Here we are using 4 important elements.
+
+Of particular interest, is the `type_`. It is initialized with 
+`UMessageType::UMESSAGE_TYPE_PUBLISH`. This is a hint to the transporter that the message 
+carries information for letting anybody - who is interested - know. This 'anybody' can be 
+another _uEntity_, present somewhere in the car. The transporter can decide how to ensure that 
+every such inquisitive _uEntity_ receives it. For other values that `type_` can have, see [here](https://docs.rs/up-rust/latest/up_rust/enum.UMessageType.html).
+
+The `source` is useful for the transporter for determining who all are interested about this 
+particular message. Some are waiting to hear what the tyre-pressure is, while some others are 
+interested to know if the head-lamp is ON. 
+
+The `ttl` helps decide if the message is of any use, in case of time-sensitive operations on its 
+contents. A message may outlive its usefulness if it reaches the inquisitive _uEntity_ too late.
+
+```
+╔═══════════════╗
+║   UPayload    ║
+╚═══════════════╝
+```
+
+`UPayload` is a wrapper around the (raw) message payload, along with the corresponding payload 
+[format](https://docs.rs/up-rust/latest/up_rust/enum.UPayloadFormat.html). 
+
+```rust
+    let u_payload = UPayload::new(
+                        pack_bms_can_frame(battery_pct, temp_c).to_vec(),
+                        UPayloadFormat::UPAYLOAD_FORMAT_RAW
+                    );
+```
+
+```
+╔══════════════╗
+║   UMessage   ║
+╚══════════════╝
+```
+
+Finally, we come to `UMessage`. It is comprised of `UAttributes` and `UPayload`.
+
+```rust
+let message = UMessage {
+                    attributes: Some(attributes).into(),
+                    payload: Some(u_payload.payload()),
+                    ..Default::default()
+                };
+```
+
+Once we have the `UMessage`, we have to flatten it to a stream of bytes, so that it can be 
+transported easily. `UMessage.write_to_bytes()` gives us the series of octets that is 
+transportation-ready.
+
+----
+
+### Chapter (Phase) 3

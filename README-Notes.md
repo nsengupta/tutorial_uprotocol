@@ -21,7 +21,7 @@ Stage-by-stage tutorial drafts at the repo root:
 |---|---|
 | `Stage-0.md` | Historical baseline (`up-client` / `up-server` names) |
 | `Stage-1.md` | Renamed crates, 1:1 UDS pub/sub, architectural wall narrative |
-| `Stage-2.md` | uProtocol layers (2.1–2.3), `up-uds-transport` (2.4); binaries not refactored yet |
+| `Stage-2.md` | uProtocol layers (2.1–2.3), `up-uds-transport` (2.4), benefits (2.5); binaries not refactored yet |
 | `uProtocol-tutorial-draft-1.md` | Consolidated tutorial draft (in progress) |
 
 ## Build and run
@@ -118,9 +118,9 @@ Future stages will receive their own tags (e.g. `Stage-2-Baseline`) when shipped
 
 ## Stage 2 plan (in progress — paused after 2.4)
 
-Completed: `Stage-2.md` (sections 2.1–2.4), `phases/02_uprotocol_semantics/crates/up-uds-transport`.
+Completed: `Stage-2.md` (sections 2.1–2.5), `phases/02_uprotocol_semantics/crates/up-uds-transport`.
 
-Pending before `Stage-2-Baseline` tag: 2.5–2.6 (benefits/limits narrative), 2.7–2.8 (refactor binaries), 2.9–2.10 (evaluate + tag).
+Pending before `Stage-2-Baseline` tag: 2.6 (limits narrative), 2.7–2.8 (refactor binaries), 2.9–2.10 (evaluate + tag).
 
 See `TUTORIAL-ROADMAP.md` Phase 2 for full checklist.
 
