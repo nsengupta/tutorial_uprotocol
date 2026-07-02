@@ -54,7 +54,7 @@ Demonstrate to the Eclipse SDV community and advanced systems engineers that uPr
   - **Same abstraction surface** as production transports (`LocalTransport` today, Zenoh in Stage 3) — business logic won't need rewriting
   - Transport concerns **centralised** in one crate instead of duplicated across binaries
 
-- [ ] **2.6 Document where we still fall short (Stage 3 setup):**
+- [x] **2.6 Document where we still fall short (Stage 3 setup):**
   Be explicit — `up-uds-transport` is pedagogically useful but **not** a production SDV transport:
   | Limitation | Why it matters |
   |---|---|
@@ -67,25 +67,25 @@ Demonstrate to the Eclipse SDV community and advanced systems engineers that uPr
 
 ### C — Refactor application binaries
 
-- [ ] **2.7 Refactor `up-battery-telemetry-publisher`:**
+- [x] **2.7 Refactor `up-battery-telemetry-publisher`:**
   - `StaticUriProvider` (or equivalent) for consistent URI construction
   - Protobuf BMS payload (`UPayload::try_from_protobuf`) — remove CAN offset packing from business path
   - Publish via `SimplePublisher` + `up-uds-transport` (proper source/event URI)
 
-- [ ] **2.8 Refactor `up-telemetry-subscriber`:**
+- [x] **2.8 Refactor `up-telemetry-subscriber`:**
   - Implement `UListener` (`on_receive`) — unpack typed payload, print SoC/temperature
   - Register listener with URI filter via `up-uds-transport`
   - Remove inline socket-read / manual decode loop from `main`
 
 ### D — Close the stage
 
-- [ ] **2.9 Evaluate the intermediate state (tutorial + code):**
+- [x] **2.9 Evaluate the intermediate state (tutorial + code):**
   Confirm: application routing contracts are now well-defined and declarative; **transport execution is still bottlenecked** by point-to-point UDS. Cliffhanger: topology change + Zenoh in Stage 3; thermal subscriber + fan-out payoff there.
 
-- [ ] **2.10 Ship Stage 2:**
+- [x] **2.10 Ship Stage 2:**
   - `Stage-2.md` (code snippets in-step, links to uProtocol docs)
   - Verify build + 5-message run
-  - Commit; tag `Stage-2-Baseline`; update `README-Notes.md`
+  - Commit; tag `Stage-2-Baseline`; update `README-Notes.md` *(commit/tag: maintainer)*
 
 
 ## 🛠️ Phase 3: The Scaling Limit & The Zenoh Payoff

@@ -1,67 +1,82 @@
-use tokio::net::UnixListener;
-use tokio::io::AsyncReadExt;
-use up_rust::UMessage;
-use protobuf::Message;
-use std::io::{Write, stdout};
+use std::sync::{
+    atomic::{AtomicU32, Ordering},
+    Arc,
+};
 
-const SOCKET_PATH: &str = "/tmp/uprotocol_twin.sock";
+use async_trait::async_trait;
+use tokio::sync::Notify;
+use up_bms_proto::constants::*;
+use up_bms_proto::BatteryTelemetry;
+use up_rust::{LocalUriProvider, StaticUriProvider, UListener, UMessage, UTransport};
+use up_uds_transport::UdsTransport;
 
-#[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
-    // Clean up dead nodes from previous runs before binding.
-    let _ = std::fs::remove_file(SOCKET_PATH);
-    let listener = UnixListener::bind(SOCKET_PATH)?;
-    println!("Battery telemetry subscriber listening on: {}", SOCKET_PATH);
+struct BatteryTelemetryListener {
+    received: Arc<AtomicU32>,
+    shutdown: Arc<Notify>,
+}
 
-    loop {
-        let (mut stream, _) = listener.accept().await?;
+#[async_trait]
+impl UListener for BatteryTelemetryListener {
+    async fn on_receive(&self, msg: UMessage) {
+        match msg.extract_protobuf::<BatteryTelemetry>() {
+            Ok(telemetry) => {
+                let count = self.received.fetch_add(1, Ordering::SeqCst) + 1;
+                log::trace!(
+                    "UListener::on_receive via up-uds-transport dispatch (message {count}/{EXPECTED_MESSAGE_COUNT})"
+                );
+                println!(
+                    "[Battery telemetry subscriber] Processing incoming telemetry...\n\
+                     -> State of Charge: {:.1}%\n\
+                     -> Cell Temp: {} °C",
+                    telemetry.soc_percent, telemetry.temp_celsius,
+                );
 
-        // Spawn a dedicated task for each incoming socket connection.
-        tokio::spawn(async move {
-            // Step A: Read length prefix header (4 Bytes).
-            let mut len_bytes = [0u8; 4];
-            if stream.read_exact(&mut len_bytes).await.is_err() {
-                return;
-            }
-            let expected_len = u32::from_be_bytes(len_bytes) as usize;
-
-            // Step B: Read matching body bytes based on length header.
-            let mut body_bytes = vec![0u8; expected_len];
-            if stream.read_exact(&mut body_bytes).await.is_err() {
-                return;
-            }
-
-            // Step C: Reconstruct uProtocol semantics by decoding the stream bytes.
-            match UMessage::parse_from_bytes(&body_bytes[..]) {
-                Ok(u_message) => {
-                    if let Some(payload_data) = u_message.payload.as_ref() {
-                        let extracted_bytes: Vec<u8> = payload_data.clone().into();
-                        let (soc, temp) = unpack_bms_can_frame(&extracted_bytes);
-
-                        let output = format!(
-                            "[Battery telemetry subscriber] Processing incoming CAN telemetry...\n\
-                             -> State of Charge: {:.1}%\n\
-                             -> Cell Temp: {} °C",
-                            soc, temp,
-                        );
-                        println!("{}", output);
-                        let _ = stdout().flush();
-                    }
+                if count >= EXPECTED_MESSAGE_COUNT {
+                    self.shutdown.notify_one();
                 }
-                Err(e) => eprintln!("Decode error: {:?}", e),
             }
-        });
+            Err(err) => eprintln!("Failed to decode BatteryTelemetry payload: {err}"),
+        }
     }
 }
 
-fn unpack_bms_can_frame(can_data: &[u8]) -> (f32, i8) {
-    if can_data.len() < 2 { return (0.0, 0); }
+#[tokio::main]
+async fn main() -> Result<(), anyhow::Error> {
+    env_logger::init();
 
-    // Unpack according to DBC rules
-    let raw_soc = can_data[0];
-    let battery_level_pct = raw_soc as f32 * 0.5;
+    let uri_provider = StaticUriProvider::new(
+        AUTHORITY_NAME,
+        PUBLISHER_UE_ID,
+        PUBLISHER_UE_VERSION,
+    );
+    let source_filter = uri_provider.get_resource_uri(BATTERY_TELEMETRY_RESOURCE_ID);
 
-    let temperature_c = can_data[1] as i8;
+    let received = Arc::new(AtomicU32::new(0));
+    let shutdown = Arc::new(Notify::new());
+    let listener = Arc::new(BatteryTelemetryListener {
+        received,
+        shutdown: shutdown.clone(),
+    });
 
-    (battery_level_pct, temperature_c)
+    let transport = UdsTransport::serve(SOCKET_PATH).await?;
+    log::trace!(
+        "using up-uds-transport receive path: UdsTransport::serve → {} (Stage 2 UTransport, not raw UnixListener loop)",
+        SOCKET_PATH
+    );
+    transport
+        .register_listener(&source_filter, None, listener)
+        .await?;
+    log::trace!(
+        "registered UListener with source filter resource_id=0x{BATTERY_TELEMETRY_RESOURCE_ID:04x}"
+    );
+
+    println!(
+        "Battery telemetry subscriber listening on: {} (expecting {} messages)",
+        SOCKET_PATH, EXPECTED_MESSAGE_COUNT
+    );
+
+    shutdown.notified().await;
+    println!("Received {EXPECTED_MESSAGE_COUNT} messages — exiting.");
+
+    Ok(())
 }
