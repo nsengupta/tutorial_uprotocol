@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+// Phase-1 used ttl: Some(5000) on UAttributes. Here we pass the same TTL
+// through CallOptions, which SimplePublisher converts into UAttributes.ttl.
+// See: https://docs.rs/up-rust/latest/up_rust/communication/struct.CallOptions.html
+
 use rand::Rng;
 use up_bms_proto::constants::*;
 use up_bms_proto::BatteryTelemetry;
@@ -46,7 +50,13 @@ async fn main() -> Result<(), anyhow::Error> {
         publisher
             .publish(
                 BATTERY_TELEMETRY_RESOURCE_ID,
-                CallOptions::for_publish(None, None, None),
+                // `CallOptions::for_publish(ttl, priority, sink)`.
+                // - ttl (ms): Some(5000) matches Phase 1's explicit TTL of 5 seconds.
+                //   None means infinite TTL — the message never expires.
+                //   In a production system, infinite TTL could cause stale-data
+                //   processing; set a finite TTL when data has a freshness window.
+                // - priority, sink: None means defaults (best-effort, unspecified).
+                CallOptions::for_publish(Some(5000), None, None),
                 Some(payload),
             )
             .await

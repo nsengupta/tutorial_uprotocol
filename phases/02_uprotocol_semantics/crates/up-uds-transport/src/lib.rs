@@ -28,18 +28,6 @@ struct RegisteredListener {
 }
 
 impl RegisteredListener {
-    fn matches(&self, source: &UUri, sink: Option<&UUri>) -> bool {
-        if !self.source_filter.matches(source) {
-            return false;
-        }
-
-        if let Some(pattern) = &self.sink_filter {
-            sink.is_some_and(|candidate| pattern.matches(candidate))
-        } else {
-            sink.is_none()
-        }
-    }
-
     fn matches_msg(&self, msg: &UMessage) -> bool {
         let Some(attribs) = msg.attributes.as_ref() else {
             return false;
@@ -47,7 +35,20 @@ impl RegisteredListener {
         let Some(source) = attribs.source.as_ref() else {
             return false;
         };
-        self.matches(source, attribs.sink.as_ref())
+
+        // Check the source: does this message's source URI match the registered filter?
+        if !self.source_filter.matches(source) {
+            return false;
+        }
+
+        // Check the sink: if the registration has a sink filter, the message must
+        // carry a matching sink URI. If no sink filter was registered, the message
+        // must carry no sink (i.e. it's a broadcast/notification, not an RPC reply).
+        if let Some(pattern) = &self.sink_filter {
+            attribs.sink.as_ref().is_some_and(|candidate| pattern.matches(candidate))
+        } else {
+            attribs.sink.is_none()
+        }
     }
 
     async fn on_receive(&self, msg: UMessage) {
@@ -104,6 +105,11 @@ impl UdsTransport {
     async fn dispatch(&self, message: UMessage) {
         let listeners = self.listeners.read().await;
         for registered in listeners.iter() {
+            // Only forward this message to listeners whose registered source/sink
+            // filters match the message's own source and (optional) sink URIs.
+            // This is uProtocol's URI-based filter mechanism — the transport delivers
+            // only to subscribers whose registered URI patterns match the message's source.
+            // Unlike a broker topic model, this is a direct URI match over a stream socket.
             if registered.matches_msg(&message) {
                 registered.on_receive(message.clone()).await;
             }

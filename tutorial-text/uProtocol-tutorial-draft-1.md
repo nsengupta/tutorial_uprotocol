@@ -18,13 +18,6 @@ hopefully, this will be useful for you too.
 
 ----
 
-Mention that info may be incomplete or incorrect; I am looking for help to fix these.
-
-----
-
-#TODO - Explain the phases/sections that exist in code, corresponding to the chapters in this 
-tutorial
-
 ### Chapter 1
 
 ### What shall we build
@@ -41,6 +34,20 @@ The application is simple. There exists:
 
 Each application runs in its own address-space (two different processes, run from separate 
 shells on my Linux machine). 
+
+This tutorial is **Phase-1**. The code lives in `phases/01_raw_sockets/`:
+
+```
+phases/01_raw_sockets/
+├── Cargo.toml
+└── crates/
+    ├── up-frame-codec/             # length-prefix serialize + deserialize
+    ├── battery-telemetry-publisher # sends UMessage over UDS
+    └── telemetry-subscriber        # receives UMessage over UDS
+```
+
+A later phase (Phase-2, in `phases/02_uprotocol_semantics/`) will refactor this same
+functionality using uProtocol's own L1 transport and L2 communication helpers.
 
 For any such application where two (or more, but that's later) processes converse between 
 themselves, two aspects are important (obvious, one may quip):
@@ -100,6 +107,8 @@ Without the attributes, the `UMessage` cannot be formed. We make use of this typ
                             type_: UMessageType::UMESSAGE_TYPE_PUBLISH.into(),
                             // Complete information of where is this message prepared; see below
                             source: Some(source_uri.clone()).into(),
+                            // LEFT DEFAULT: This is a decoupled PUBLISH broadcast, not an RPC request!
+                            // sink: None.into(),
                             // How long is the message going to leave? We will explore more, later in the tutorial
                             ttl: Some(5000),
                             ..Default::default()
@@ -158,47 +167,7 @@ pub fn deserialize_for_unix_socket(framed: &[u8]) -> Result<UMessage, anyhow::Er
     Ok(UMessage::parse_from_bytes(&framed[4..end])?)
 }
 ```
-
-When we run the applications:
-
-```shell
---- Battery telemetry publisher starting ---
-Message 1: SoC = 76.6%, Temp = 24°C
-   Sent 67 bytes.
-
-Message 2: SoC = 77.9%, Temp = 23°C
-   Sent 67 bytes.
-
-Message 3: SoC = 76.6%, Temp = 21°C
-   Sent 67 bytes.
-
-Message 4: SoC = 75.3%, Temp = 20°C
-   Sent 67 bytes.
-
-Message 5: SoC = 78.3%, Temp = 22°C
-   Sent 67 bytes.
-
-```
-
-```shell
-Battery telemetry subscriber listening on: /tmp/uprotocol_twin.sock
-[Battery telemetry subscriber] Processing incoming CAN telemetry...
--> State of Charge: 76.5%
--> Cell Temp: 24 °C
-[Battery telemetry subscriber] Processing incoming CAN telemetry...
--> State of Charge: 77.5%
--> Cell Temp: 23 °C
-[Battery telemetry subscriber] Processing incoming CAN telemetry...
--> State of Charge: 76.5%
--> Cell Temp: 21 °C
-[Battery telemetry subscriber] Processing incoming CAN telemetry...
--> State of Charge: 75.0%
--> Cell Temp: 20 °C
-[Battery telemetry subscriber] Processing incoming CAN telemetry...
--> State of Charge: 78.0%
--> Cell Temp: 22 °C
-
-```
+[Jump to 'How to run' for a sample output](#how-to-run)
 
 So, there we are. A uProtocol Message has been shared between two applications using a 
 OS-provided transport facility. 
@@ -237,14 +206,17 @@ Battery subsystem, uProtocol allows us to say:
 
 This is a properly-formed URI. The table explains each '/' separated component of the string:
 
-(TODO: convert the following CSV snippet to a proper table)
-
-Field,Code Property,Human-Readable Name
-Scheme,up,{This is a uProtocol-specific URI}
-Authority,authority_name,local_vehicle
-uEntity,ue_id,powertrain.battery
-Version,ue_version_major,1
-uResource,resource_id,battery_soc
+```text
+┌──────────┬─────────────────┬──────────────────────┐
+│ Field    │ Code Property   │ Human-Readable Name  │
+├──────────┼─────────────────┼──────────────────────┤
+│ Scheme   │ up              │ (uProtocol-specific) │
+│ Authority│ authority_name  │ local_vehicle        │
+│ uEntity  │ ue_id           │ powertrain.battery   │
+│ Version  │ ue_version_major│ 1                    │
+│ uResource│ resource_id     │ battery_soc          │
+└──────────┴─────────────────┴──────────────────────┘
+```
 
 Note: A _[uEntity](https://github.com/eclipse-uprotocol/up-spec/blob/main/basics/README.adoc#uentity)_ (uProtocol software entity ) is a piece of software deployed somewhere on a network 
 host (in our case, the car itself). uEntities are uniquely identified within a system by means of 
@@ -336,6 +308,10 @@ From the code:
             type_: UMessageType::UMESSAGE_TYPE_PUBLISH.into(),
             // Where this message is originating from
             source: Some(source_uri.clone()).into(),
+            
+            // LEFT DEFAULT: This is a decoupled PUBLISH broadcast, not an RPC request!
+            // sink: None.into(),
+
             ttl: Some(5000),
             ..Default::default()
         };
@@ -394,4 +370,56 @@ transportation-ready.
 
 ----
 
-### Chapter (Phase) 3
+### How to run
+
+```shell
+# From the repo root
+cargo build --manifest-path phases/01_raw_sockets/Cargo.toml
+
+# Terminal 1 — subscriber
+cargo run --manifest-path phases/01_raw_sockets/Cargo.toml -p telemetry-subscriber
+
+# Terminal 2 — publisher
+cargo run --manifest-path phases/01_raw_sockets/Cargo.toml -p battery-telemetry-publisher
+```
+
+Expected output:
+
+```shell
+--- Battery telemetry publisher starting ---
+Message 1: SoC = 76.6%, Temp = 24°C
+   Sent 67 bytes.
+
+Message 2: SoC = 77.9%, Temp = 23°C
+   Sent 67 bytes.
+
+Message 3: SoC = 76.6%, Temp = 21°C
+   Sent 67 bytes.
+
+Message 4: SoC = 75.3%, Temp = 20°C
+   Sent 67 bytes.
+
+Message 5: SoC = 78.3%, Temp = 22°C
+   Sent 67 bytes.
+
+```
+
+```shell
+Battery telemetry subscriber listening on: /tmp/uprotocol_twin.sock
+[Battery telemetry subscriber] Processing incoming CAN telemetry...
+-> State of Charge: 76.5%
+-> Cell Temp: 24 °C
+[Battery telemetry subscriber] Processing incoming CAN telemetry...
+-> State of Charge: 77.5%
+-> Cell Temp: 23 °C
+[Battery telemetry subscriber] Processing incoming CAN telemetry...
+-> State of Charge: 76.5%
+-> Cell Temp: 21 °C
+[Battery telemetry subscriber] Processing incoming CAN telemetry...
+-> State of Charge: 75.0%
+-> Cell Temp: 20 °C
+[Battery telemetry subscriber] Processing incoming CAN telemetry...
+-> State of Charge: 78.0%
+-> Cell Temp: 22 °C
+
+```
