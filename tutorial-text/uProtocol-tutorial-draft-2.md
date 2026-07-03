@@ -2,8 +2,8 @@
 
 This is not a stand-alone chapter. This is the second phase of the tutorial where we will build 
 on everything that was established in Phase-1 (the previous chapter) and then some. So, if we
-have not read the first chapter's [draft](uProtocol-tutorial-draft-1.md), please do so. The code 
-corresponding to the previous chapter (Phase 1) is in `phases/01_raw_sockets/`. This chapter's 
+have not read the previous tutorial [draft](uProtocol-tutorial-draft-1.md), please do so. The code 
+corresponding to that (previous) tutorial is in `phases/01_raw_sockets/`. This chapter's 
 code lives in `phases/02_uprotocol_semantics/`.
 
 In this chapter, we are going to:

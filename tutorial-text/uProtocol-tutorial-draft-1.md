@@ -78,8 +78,7 @@ important for the tutorial).(Exlplain the CAN-frame part here).
 This array is the _payload_ that is transported (and collected at the other end). We can tansport
 this payload as raw-bytes. But, we want to put it in an envelope. We decide to use uProtocol's types to prepare this envelope.
 
-uProtocol provides a type named [UPayload](https://docs.
-rs/up-rust/latest/up_rust/communication/struct.UPayload.html) for this. 
+uProtocol provides a type named [UPayload](https://docs.rs/up-rust/latest/up_rust/communication/struct.UPayload.html) for this. 
 
 ```rust
     let u_payload = UPayload::new(
