@@ -2,7 +2,7 @@
 
 This is not a stand-alone chapter. This is the second phase of the tutorial where we will build 
 on everything that was established in Phase-1 (the previous chapter) and then some. So, if we
-have not read the previous tutorial [draft](uProtocol-tutorial-draft-1.md), please do so. The code 
+have not read the previous tutorial [Phase 1 tutorial](Tutorial-Phase-1.md), please do so. The code 
 corresponding to that (previous) tutorial is in `phases/01_raw_sockets/`. This chapter's 
 code lives in `phases/02_uprotocol_semantics/`.
 
@@ -43,7 +43,6 @@ loop {
     });
 }
 ```
-
 And the publisher:
 
 ```rust
@@ -68,7 +67,6 @@ let framed = serialize_for_unix_socket(&message)?;
 let mut stream = UnixStream::connect(SOCKET_PATH).await?;
 stream.write_all(&framed).await?;
 ```
-
 ```
 ┌─────────────────────────────────────────────────────────┐
 │              Phase-1 Architecture                       │
@@ -87,7 +85,6 @@ stream.write_all(&framed).await?;
 │  No way to add a second consumer.                       │
 └─────────────────────────────────────────────────────────┘
 ```
-
 ### Something is not quite right there
 
 Both binaries embed transport details that do not belong in battery telemetry code.
@@ -129,7 +126,6 @@ uProtocol is organized in layers. Understanding the layers, helps.
 │  UDS (Phase 1–2), Zenoh (Phase 3), MQTT, …                     │
 └────────────────────────────────────────────────────────────────┘
 ```
-
 Phase-1 lived at the **Envelope** and **Wire** layers. We assembled `UMessage` by hand and
 serialised it directly into a socket.
 
@@ -157,7 +153,6 @@ wire (UDS + length-prefix framing) stays the same — we wrap it behind uProtoco
 │  Transport code lives in up-uds-transport, NOT in main.rs           │
 └─────────────────────────────────────────────────────────────────────┘
 ```
-
 ----
 
 ### Chapter 3: What changed in the workspace
@@ -174,7 +169,6 @@ phases/02_uprotocol_semantics/
     ├── up-battery-telemetry-publisher/  # REFACTORED: uses SimplePublisher
     └── up-telemetry-subscriber/         # REFACTORED: uses UListener
 ```
-
 ----
 
 ### Chapter 4: `up-bms-proto` — why typed protobuf payloads
@@ -187,14 +181,12 @@ let u_payload = UPayload::new(
     UPayloadFormat::UPAYLOAD_FORMAT_RAW
 );
 ```
-
 And on the subscriber side:
 
 ```rust
 let payload = msg.payload.unwrap();
 let (pct, temp) = unpack_bms_can_frame(&payload);
 ```
-
 `pack_bms_can_frame` and `unpack_bms_can_frame` are **C code in Rust clothing**. They exist
 because the publisher and subscriber need a way to agree on how SoC and temperature are laid
 out in a byte buffer. In C-based automotive systems, this agreement comes from a DBC file (CAN
@@ -213,7 +205,6 @@ fn pack_bms_can_frame(soc_pct: f32, temp_c: f32) -> [u8; 8] {
     buf
 }
 ```
-
 Spot the problems:
 
 1. **Scale factors are buried in code.** `0.5` and `10.0` are kind of, magic numbers. If we 
@@ -244,7 +235,6 @@ message BatteryTelemetry {
     int32 temp_celsius = 2;
 }
 ```
-
 - **No more bit-level encoding.** The raw CAN buffer required dividing SoC by 0.5 and
   multiplying temperature by 10 to fit into `u16`/`i16` — then the reverse on the subscriber
   side. Protobuf lets us express `soc_percent` as `float` and `temp_celsius` as `int32`
@@ -274,7 +264,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
-
 It also exports demo constants so both the publisher and subscriber use the same socket path and
 URI identifiers:
 
@@ -289,7 +278,6 @@ pub mod constants {
     pub const EXPECTED_MESSAGE_COUNT: u32 = 5;
 }
 ```
-
 Both the publisher and subscriber depend on `up-bms-proto`. There is no more DBC secret — the
 `.proto` file is the **contract**.
 
@@ -298,7 +286,7 @@ Both the publisher and subscriber depend on `up-bms-proto`. There is no more DBC
 A quick note on what this *does not* solve: protobuf gives us a typed data contract, but the
 socket path (`/tmp/uprotocol_twin.sock`) and the URI conventions (`PUBLISHER_UE_ID = 0x1010`,
 `BATTERY_TELEMETRY_RESOURCE_ID = 0x8001`) are still hardcoded into both binaries. Those will
-move to configuration or discovery in later stages. For now, the constants crate is enough to
+move to configuration or discovery in later phases. For now, the constants crate is enough to
 keep the demo honest.
 
 ### Chapter 5: What does the Phase-1 subscriber *actually* do?
@@ -331,7 +319,6 @@ loop {
     });
 }
 ```
-
 Let's count the implicit responsibilities in that one spawned closure:
 
 | Step | Responsibility | Who should own it |
@@ -362,7 +349,6 @@ for this:
 ║  unregister_listener(filter, listener)        ║
 ╚═══════════════════════════════════════════════╝
 ```
-
 `UTransport` says: "I know how to move a `UMessage` from point A to point B. I know how to
 accept registrations from interested parties. I know when to call those parties. You tell me
 _who_ is interested and _what_ we want to send; the transport handles the rest."
@@ -394,7 +380,6 @@ server
     .register_listener(&source_filter_uri, None, listener.clone())
     .await?;
 ```
-
 The dispatch logic (simplified from the crate):
 
 ```rust
@@ -404,7 +389,6 @@ for registered in listeners.iter() {
     }
 }
 ```
-
 Where `matches_msg` uses `up-rust`'s `UUri::matches` — the same URI matching rules that
 `LocalTransport` uses. A listener fires when the source filter matches the message's source URI.
 
@@ -415,7 +399,6 @@ bytes:
 let client = UdsTransportClient::new("/tmp/uprotocol_twin.sock");
 client.send(message).await?;
 ```
-
 `register_listener` on the client returns `UNIMPLEMENTED` — listeners live on the server side.
 
 #### How does this compare to Phase-1?
@@ -430,7 +413,6 @@ Phase-2:  socket → [up-uds-transport] → filter match → UListener::on_recei
                                      ↑
                             (centralised, reusable)
 ```
-
 ----
 
 ### Chapter 7: Refactored publisher — `SimplePublisher` + protobuf payload
@@ -485,7 +467,6 @@ async fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 ```
-
 #### What did we lose?
 
 | Phase-1 code | Phase-2 equivalent |
@@ -524,7 +505,6 @@ Now the subscriber. This is a bigger change. The entire socket loop is gone.
 ║   )                            ║
 ╚════════════════════════════════╝
 ```
-
 We implement this trait:
 
 ```rust
@@ -553,7 +533,6 @@ impl UListener for BatteryTelemetryListener {
     }
 }
 ```
-
 And wire it into `main`:
 
 ```rust
@@ -591,7 +570,6 @@ async fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 ```
-
 #### What changed from Phase-1?
 
 Every line related to socket I/O is gone. In its place:
@@ -624,7 +602,6 @@ cargo run --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-telemet
 # Terminal 2 — publisher
 cargo run --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-battery-telemetry-publisher
 ```
-
 Expected output (subscriber):
 
 ```
@@ -638,7 +615,6 @@ Battery telemetry subscriber listening on: /tmp/uprotocol_twin.sock
 ... (5 messages total)
 Received 5 messages, shutting down.
 ```
-
 ----
 
 ### Chapter 10: A look at what we have done
@@ -674,7 +650,6 @@ Let's look back at the architecture:
 ║   SoC: 76.3%, Temp: 22°C                                    ║
 ╚═════════════════════════════════════════════════════════════╝
 ```
-
 The publisher does not know about sockets. The subscriber does not know about sockets. The
 transport crate owns the wire; the application code owns the business logic.
 
@@ -695,7 +670,7 @@ is still bottlenecked by UDS. Let's be honest about this.
 cannot independently subscribe to the same battery telemetry stream. The socket is consumed by
 our subscriber's accept loop.
 
-Stage 1's problem — "how do we add a second consumer?" — is **unresolved**. The URI filters help
+Phase 1's problem — "how do we add a second consumer?" — is **unresolved**. The URI filters help
 within one process, but they do not clone bytes to arbitrary peers on the network.
 
 ```
@@ -706,13 +681,11 @@ Phase-1 wall:                    Phase-2:
                                  (still one process, one socket)
                                  Thermal engine still cannot tap the stream
 ```
-
 #### Limitation 2 — Filesystem socket path (local only)
 
 ```text
 /tmp/uprotocol_twin.sock
 ```
-
 This path exists only on one machine. Move the battery uEntity to a Zone ECU and the display to
 a central compute node, and UDS breaks — there is no cross-machine Unix socket.
 
@@ -787,7 +760,6 @@ message BatteryTelemetry {
   int32 temp_celsius = 2;
 }
 ```
-
 The publisher creates a `BatteryTelemetry` protobuf message, serialises it with
 `prost`, and wraps the resulting bytes in a `UPayload`. The subscriber parses
 the bytes back into the same type — the `.proto` file is the single source of truth.

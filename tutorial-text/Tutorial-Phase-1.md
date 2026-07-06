@@ -2,8 +2,8 @@
 ### Prologue
 The story began when I was exploring the world of Eclipse-SDV (link here) out of curiosity. This 
 was an area hitherto completely unknown to me. Yet, I was drawn towards it. Why? I have captured 
-the reasons here (my blog link here).
-One of the technologies that captured my interest was uProtocol (link here). I am familiar with 
+the reasons here (my blog link [here](https://nsengupta.github.io/blog/why-explore-software-defined-vehicle/)).
+One of the technologies that captured my interest was [uProtocol](https://github.com/eclipse-uprotocol). I am familiar with 
 the problem it was trying to solve (I have worked in the area of location-agnostic, 
 multi-machine-architecture-friendly, network-carried, multiplex-able middleware for a 
 good part of my career), but the domain was different. My aim was to understand the landscape 
@@ -45,7 +45,6 @@ phases/01_raw_sockets/
     ├── battery-telemetry-publisher # sends UMessage over UDS
     └── telemetry-subscriber        # receives UMessage over UDS
 ```
-
 A later phase (Phase-2, in `phases/02_uprotocol_semantics/`) will refactor this same
 functionality using uProtocol's own L1 transport and L2 communication helpers.
 
@@ -113,7 +112,6 @@ Without the attributes, the `UMessage` cannot be formed. We make use of this typ
                             ..Default::default()
                         };
 ```
-
 `source` is a mandatory field of `UAttributes`. It folds in a `UUri` which is a corenerstone of 
 the whole uProtocol landscape. Again, we make use of a [UUri](https://docs.rs/up-rust/latest/up_rust/struct.UUri.html) type.
 
@@ -193,8 +191,6 @@ This is what we have seen:
 ║   UUri    ║
 ╚═══════════╝
 ```
-
-
 To understand what `UUri` stands for, let's take a look at how uProtocol identifies a particular 
 piece of software component/service anywhere in the car. To refer to State-of-Charge of a 
 Battery subsystem, uProtocol allows us to say:
@@ -202,7 +198,6 @@ Battery subsystem, uProtocol allows us to say:
 ```shell
     //up/local_vehicle/powertrain.battery/1/battery_soc
 ```
-
 This is a properly-formed URI. The table explains each '/' separated component of the string:
 
 ```text
@@ -216,7 +211,6 @@ This is a properly-formed URI. The table explains each '/' separated component o
 │ uResource│ resource_id     │ battery_soc          │
 └──────────┴─────────────────┴──────────────────────┘
 ```
-
 Note: A _[uEntity](https://github.com/eclipse-uprotocol/up-spec/blob/main/basics/README.adoc#uentity)_ (uProtocol software entity ) is a piece of software deployed somewhere on a network 
 host (in our case, the car itself). uEntities are uniquely identified within a system by means of 
 the type and version of the service interface that they implement.
@@ -265,7 +259,6 @@ So, in order inform any uEntity, if the head-lamp in the front-left of the car i
 ```shell
 //up/my_own_car/front_head_lamp.left/v1/is_on
 ```
-
 In the code, the corresponding `UUri` will be:
 
 ```rust
@@ -277,7 +270,6 @@ In the code, the corresponding `UUri` will be:
         ..Default::default()
     };
 ```
-
 ```rust
 +--
 |
@@ -286,7 +278,6 @@ In the code, the corresponding `UUri` will be:
 |
 +--
 ```
-
 ```
 ╔══════════════════╗
 ║   UAttributes    ║
@@ -315,7 +306,6 @@ From the code:
             ..Default::default()
         };
 ```
-
 The complete data-model for _UAttributes_ is [here](https://docs.rs/up-rust/latest/up_rust/struct.UAttributes.html). Here we are using 4 important elements.
 
 Of particular interest, is the `type_`. It is initialized with 
@@ -336,7 +326,6 @@ contents. A message may outlive its usefulness if it reaches the inquisitive _uE
 ║   UPayload    ║
 ╚═══════════════╝
 ```
-
 `UPayload` is a wrapper around the (raw) message payload, along with the corresponding payload 
 [format](https://docs.rs/up-rust/latest/up_rust/enum.UPayloadFormat.html). 
 
@@ -346,13 +335,11 @@ contents. A message may outlive its usefulness if it reaches the inquisitive _uE
                         UPayloadFormat::UPAYLOAD_FORMAT_RAW
                     );
 ```
-
 ```
 ╔══════════════╗
 ║   UMessage   ║
 ╚══════════════╝
 ```
-
 Finally, we come to `UMessage`. It is comprised of `UAttributes` and `UPayload`.
 
 ```rust
@@ -362,7 +349,6 @@ let message = UMessage {
                     ..Default::default()
                 };
 ```
-
 Once we have the `UMessage`, we have to flatten it to a stream of bytes, so that it can be 
 transported easily. `UMessage.write_to_bytes()` gives us the series of octets that is 
 transportation-ready.
@@ -381,7 +367,6 @@ cargo run --manifest-path phases/01_raw_sockets/Cargo.toml -p telemetry-subscrib
 # Terminal 2 — publisher
 cargo run --manifest-path phases/01_raw_sockets/Cargo.toml -p battery-telemetry-publisher
 ```
-
 Expected output:
 
 ```shell
@@ -402,7 +387,6 @@ Message 5: SoC = 78.3%, Temp = 22°C
    Sent 67 bytes.
 
 ```
-
 ```shell
 Battery telemetry subscriber listening on: /tmp/uprotocol_twin.sock
 [Battery telemetry subscriber] Processing incoming CAN telemetry...

@@ -1,6 +1,6 @@
-# Stage 0: Raw uProtocol Over Unix Domain Sockets
+# Phase 0: Raw uProtocol Over Unix Domain Sockets
 
-> **On `main` today:** Stage 1 code lives in `phases/01_raw_sockets/` with renamed crates (`up-battery-telemetry-publisher`, `up-telemetry-subscriber`). This document retains the original `up-client` / `up-server` names.
+> **On `main` today:** Phase 1 code lives in `phases/01_raw_sockets/` with renamed crates (`up-battery-telemetry-publisher`, `up-telemetry-subscriber`). This document retains the original `up-client` / `up-server` names.
 
 ## What We Built
 
@@ -25,7 +25,6 @@ Unix Domain Sockets with `SOCK_STREAM` provide a continuous byte stream with no 
 │                    │   UMessage             │
 └─────────────────────────────────────────────┘
 ```
-
 ---
 
 ## `up-frame-codec` — The Frame Serializer
@@ -44,7 +43,6 @@ pub fn serialize_framed_message(msg: &UMessage) -> Result<Vec<u8>, anyhow::Error
     Ok(framed_buffer)
 }
 ```
-
 The function:
 1. Serializes the `UMessage` into protobuf bytes via `write_to_bytes()`.
 2. Gets the byte length as a `u32`.
@@ -98,7 +96,6 @@ fn unpack_bms_can_frame(can_data: &[u8]) -> (f32, i8) {
     (battery_level_pct, temperature_c)
 }
 ```
-
 The server has no knowledge of what the payload *means* until it calls `unpack_bms_can_frame`. This cleanly demonstrates the layered architecture: the transport layer moves bytes, the application layer interprets them.
 
 ---
@@ -157,7 +154,6 @@ fn pack_bms_can_frame(battery_level_pct: f32) -> [u8; 8] {
     can_data
 }
 ```
-
 ---
 
 ## How to Run
@@ -169,7 +165,6 @@ cargo run -p up-server
 # Terminal 2 — send a message
 cargo run -p up-client
 ```
-
 Expected server output:
 ```
 uProtocol Socket Server listening on: /tmp/uprotocol_twin.sock
@@ -177,7 +172,6 @@ uProtocol Socket Server listening on: /tmp/uprotocol_twin.sock
 -> State of Charge: 75%
 -> Cell Temp: 25 °C
 ```
-
 ---
 
 ## Workspace Structure
@@ -185,17 +179,17 @@ uProtocol Socket Server listening on: /tmp/uprotocol_twin.sock
 ```
 up_twin_discovery/
 ├── Cargo.toml
-├── Stage-0.md                 # this file
-├── Stage-1.md
+├── docs/
+│   ├── Phase-0.md                 # this file
+│   └── Phase-1.md
 └── phases/
-    └── 01_raw_sockets/        # Stage 1 snapshot (renamed crates; see Stage-1.md)
+    └── 01_raw_sockets/        # Phase 1 snapshot (renamed crates; see Phase-1.md)
         ├── Cargo.toml
         └── crates/
             ├── up-frame-codec/
             ├── up-battery-telemetry-publisher/   # was up-client
             └── up-telemetry-subscriber/          # was up-server
 ```
-
 ---
 
 ## Key Takeaways
@@ -204,4 +198,4 @@ up_twin_discovery/
 2. **Framing is mandatory** — without length-prefix headers, stream boundaries are ambiguous.
 3. **The payload is opaque to the transport** — the server's `unpack_bms_can_frame` is a pure application-layer concern; the framing and protobuf layers just move bytes.
 4. **End-to-end data integrity** — the client packs a BMS CAN frame with `75% SoC / 25°C`, frames it, sends it over Unix socket, and the server recovers the exact same values.
-5. **This is the baseline** — Stage 2 will introduce uProtocol's topic-based addressing and listener semantics on top of this same transport.
+5. **This is the baseline** — Phase 2 will introduce uProtocol's topic-based addressing and listener semantics on top of this same transport.

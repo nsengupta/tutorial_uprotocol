@@ -1,12 +1,12 @@
-# Stage 1: The Illusion of Success — and the Architectural Wall
+# Phase 1: The Illusion of Success — and the Architectural Wall
 
 ## Why This Tutorial Exists
 
 Software-Defined Vehicles (SDVs) run dozens of microservices that must share sensor and actuator data safely, across ECUs, zones, and network boundaries. **uProtocol** is designed to be the common semantic layer for that communication: a way to express *what* is being sent, *from whom*, and *to whom* — independent of the underlying transport (Unix sockets today, automotive Ethernet tomorrow).
 
-This stage establishes a **working baseline** that looks successful on the surface. By the end, you will see why raw transport plumbing — even when wrapped in uProtocol bytes — hits a hard wall when a second consumer enters the picture.
+This phase establishes a **working baseline** that looks successful on the surface. By the end, you will see why raw transport plumbing — even when wrapped in uProtocol bytes — hits a hard wall when a second consumer enters the picture.
 
-> **Prerequisites:** Stage 0 (`Stage-0.md`) documents the original crate names (`up-client`, `up-server`). From Stage 1 onward the workspace uses clearer automotive names, but the transport mechanics are the same.
+> **Prerequisites:** Phase 0 (`Phase-0.md`) documents the original crate names (`up-client`, `up-server`). From Phase 1 onward the workspace uses clearer automotive names, but the transport mechanics are the same.
 
 ---
 
@@ -28,7 +28,6 @@ The Cargo workspace has three crates:
 │ publisher                    │ ─────────────────────────────► │ (battery telemetry)         │
 └──────────────────────────────┘   /tmp/uprotocol_twin.sock     └─────────────────────────────┘
 ```
-
 ---
 
 ## uProtocol in One Paragraph (First Principles)
@@ -38,7 +37,7 @@ At its core, uProtocol defines a **message envelope** — the `UMessage` — wit
 1. **`UAttributes`** — metadata describing intent: message type (e.g. `PUBLISH`), source address (`UUri`), optional destination, TTL, and a unique message ID.
 2. **Payload** — application bytes plus a format hint (`UPayloadFormat`, e.g. `RAW`).
 
-In Rust, `up-rust` maps the envelope to Protobuf on the wire: `UMessage::write_to_bytes()` to send, `UMessage::parse_from_bytes()` to receive. That integration gives you a **typed envelope** on both sides. What happens *inside* the payload is a separate question — and in this stage we deliberately keep that part untyped.
+In Rust, `up-rust` maps the envelope to Protobuf on the wire: `UMessage::write_to_bytes()` to send, `UMessage::parse_from_bytes()` to receive. That integration gives you a **typed envelope** on both sides. What happens *inside* the payload is a separate question — and in this phase we deliberately keep that part untyped.
 
 ---
 
@@ -46,7 +45,7 @@ In Rust, `up-rust` maps the envelope to Protobuf on the wire: `UMessage::write_t
 
 **File:** `phases/01_raw_sockets/crates/up-telemetry-subscriber/src/main.rs`
 
-While the publisher sends, the **battery telemetry subscriber** sits on the other end of the Unix socket and reverses the process: accept a connection, pull bytes off the wire, recover the `UMessage`, then interpret the payload as raw BMS data. It does not use `UAttributes` (source URI, message type, TTL) at this stage — it reaches straight for the payload bytes.
+While the publisher sends, the **battery telemetry subscriber** sits on the other end of the Unix socket and reverses the process: accept a connection, pull bytes off the wire, recover the `UMessage`, then interpret the payload as raw BMS data. It does not use `UAttributes` (source URI, message type, TTL) at this phase — it reaches straight for the payload bytes.
 
 ```rust
 const SOCKET_PATH: &str = "/tmp/uprotocol_twin.sock";
@@ -87,7 +86,6 @@ loop {
     });
 }
 ```
-
 Three layers are visible even in this short sketch: **transport** (socket read), **uProtocol envelope** (protobuf decode), and **application** (CAN byte unpacking). The next section explains why step 1 needs an explicit length prefix on a stream socket.
 
 ---
@@ -104,7 +102,6 @@ Our fix — implemented in `up-frame-codec` — prepends each protobuf-encoded `
 │  payload length N  │   protobuf UMessage      │
 └─────────────────────────────────────────────┘
 ```
-
 **File:** `phases/01_raw_sockets/crates/up-frame-codec/src/lib.rs`
 
 ```rust
@@ -116,7 +113,6 @@ pub fn serialize_for_unix_socket(msg: &UMessage) -> Result<Vec<u8>, anyhow::Erro
     Ok(framed_buffer)
 }
 ```
-
 ---
 
 ## The Publisher — Building and Sending a `UMessage`
@@ -161,7 +157,6 @@ let framed = serialize_for_unix_socket(&message)?;
 let mut stream = UnixStream::connect(SOCKET_PATH).await?;
 stream.write_all(&framed).await?;
 ```
-
 The CAN packing helper applies a fictional DBC scale (0.5% per LSB for SoC):
 
 ```rust
@@ -173,8 +168,7 @@ fn pack_bms_can_frame(battery_level_pct: f32, temperature_c: i8) -> [u8; 8] {
     can_data
 }
 ```
-
-Notice: the publisher fills in `UMESSAGE_TYPE_PUBLISH`, a **source** `UUri`, TTL, and a message ID — but **none of that matters to the subscriber right now**. The subscriber never inspects `UAttributes`; it decodes the envelope only to reach the payload bytes, treats them as **raw application data**, and leaves all interpretation to `unpack_bms_can_frame`. The `UMessage` wrapper carries far richer semantics than we use in this stage — destination addressing, intent-based routing, format enforcement — and we will put that metadata to work in later stages of this tutorial.
+Notice: the publisher fills in `UMESSAGE_TYPE_PUBLISH`, a **source** `UUri`, TTL, and a message ID — but **none of that matters to the subscriber right now**. The subscriber never inspects `UAttributes`; it decodes the envelope only to reach the payload bytes, treats them as **raw application data**, and leaves all interpretation to `unpack_bms_can_frame`. The `UMessage` wrapper carries far richer semantics than we use in this phase — destination addressing, intent-based routing, format enforcement — and we will put that metadata to work in later phases of this tutorial.
 
 ---
 
@@ -214,7 +208,6 @@ match UMessage::parse_from_bytes(&body_bytes[..]) {
     Err(e) => eprintln!("Decode error: {:?}", e),
 }
 ```
-
 The transport layer knows nothing about SoC or temperature — that interpretation lives entirely in `unpack_bms_can_frame`, an application-layer concern.
 
 ---
@@ -233,7 +226,6 @@ let payload_bytes = message.write_to_bytes()?;
 let u_message = UMessage::parse_from_bytes(&body_bytes[..])?;
 // u_message.attributes, u_message.payload field — all typed Rust structs
 ```
-
 This is the **uProtocol ↔ Protobuf integration** at work: the standard defines the envelope schema; `up-rust` generates Rust types; Protobuf handles serialisation. You get back a real `UMessage` with populated `UAttributes`.
 
 **Step 2 — payload (not typed in our code).** Look at what the publisher placed inside:
@@ -244,17 +236,16 @@ UPayload::new(
     UPayloadFormat::UPAYLOAD_FORMAT_RAW,
 );
 ```
-
 `UPAYLOAD_FORMAT_RAW` declares that the payload is an **opaque byte sequence**. After Step 1, the subscriber has a `UMessage`, but `u_message.payload` is still just bytes — there is no `BmsTelemetry` struct reconstructed on receive. The subscriber cannot infer SoC or temperature from the envelope alone; it must call `unpack_bms_can_frame` with **prior knowledge** of the byte layout (byte 0 = scaled SoC, byte 1 = temperature).
 
-| Layer | Protobuf / uProtocol provides | What Stage 1 does |
+| Layer | Protobuf / uProtocol provides | What Phase 1 does |
 |---|---|---|
 | **Envelope** (`UMessage`, `UAttributes`, `UUri`) | Typed encode/decode on the wire | ✅ Used |
 | **Payload** (application data) | Format hint via `UPayloadFormat`; can carry protobuf, JSON, etc. | ❌ RAW bytes + hand-written offset math |
 
 So we are saved in this demo only because **publisher and subscriber share a secret contract** — the fictional DBC layout — that lives outside the message. A new service (like the thermal logger we introduce later) would need the same out-of-band knowledge, or it would fail to interpret the stream.
 
-That is precisely the gap `UPayloadFormat` is meant to close: a publisher can declare *how* payload bytes should be decoded, and uProtocol-aware consumers can use that hint instead of hard-coded offsets. Later stages will lean on richer payload contracts; Stage 1 keeps bytes raw to mirror legacy automotive data paths and to make the limitation visible.
+That is precisely the gap `UPayloadFormat` is meant to close: a publisher can declare *how* payload bytes should be decoded, and uProtocol-aware consumers can use that hint instead of hard-coded offsets. Later phases will lean on richer payload contracts; Phase 1 keeps bytes raw to mirror legacy automotive data paths and to make the limitation visible.
 
 ---
 
@@ -267,7 +258,6 @@ cargo run -p up-telemetry-subscriber
 # Terminal 2 — publish 5 telemetry messages
 cargo run -p up-battery-telemetry-publisher
 ```
-
 Expected subscriber output (values vary because the publisher randomises SoC and temperature):
 
 ```
@@ -277,7 +267,6 @@ Battery telemetry subscriber listening on: /tmp/uprotocol_twin.sock
 -> Cell Temp: 23 °C
 ...
 ```
-
 Expected publisher output:
 
 ```
@@ -286,7 +275,6 @@ Message 1: SoC = 76.5%, Temp = 23°C
    Sent 142 bytes.
 ...
 ```
-
 Five messages are sent; the publisher then exits. The subscriber keeps running, ready for the next session.
 
 ---
@@ -296,8 +284,8 @@ Five messages are sent; the publisher then exits. The subscriber keeps running, 
 ```
 up_twin_discovery/
 ├── Cargo.toml
-├── Stage-0.md
-├── Stage-1.md                 # this file
+├── Phase-0.md
+├── Phase-1.md                 # this file
 └── phases/
     └── 01_raw_sockets/
         ├── Cargo.toml         # phase workspace
@@ -306,7 +294,6 @@ up_twin_discovery/
             ├── up-battery-telemetry-publisher/
             └── up-telemetry-subscriber/
 ```
-
 ---
 
 ## The New Requirement: A Second Consumer
@@ -326,8 +313,7 @@ So far, one publisher and one subscriber on a local socket feels clean. In a rea
 │ publisher                    │   ?   │ (needs the same temperature data) │
 └──────────────────────────────┘       └──────────────────────────────────┘
 ```
-
-We have **not** implemented the thermal service yet — it arrives in a later stage when the transport can support it. But the requirement is real, and it exposes a flaw in our current design.
+We have **not** implemented the thermal service yet — it arrives in a later phase when the transport can support it. But the requirement is real, and it exposes a flaw in our current design.
 
 ---
 
@@ -382,7 +368,6 @@ async fn thermal_engine_connects_to_broker() {
 // mixed with transport fan-out, back-pressure, and connection lifecycle.
 // We have reinvented a fragile, in-process message broker.
 ```
-
 **What goes wrong:**
 
 | Issue | Consequence |
@@ -393,7 +378,7 @@ async fn thermal_engine_connects_to_broker() {
 | No semantic routing | Every consumer sees every message; filtering is ad hoc |
 | Filesystem socket path | Works on one machine only — useless across ECU boundaries |
 
-Here is the key observation: **`UMessage` is independent of the transport**. The same protobuf envelope — attributes, payload, format hint — could be carried over Unix Domain Sockets today, automotive Ethernet tomorrow, or a data-space protocol like Zenoh; the application semantics do not change when the wire underneath changes. UDS is simply what we plugged in for this stage.
+Here is the key observation: **`UMessage` is independent of the transport**. The same protobuf envelope — attributes, payload, format hint — could be carried over Unix Domain Sockets today, automotive Ethernet tomorrow, or a data-space protocol like Zenoh; the application semantics do not change when the wire underneath changes. UDS is simply what we plugged in for this phase.
 
 That independence is real and valuable — but it does not solve everything by itself. Wrapping payloads in `UMessage` was a good first step; **the transport and routing story around it is still hand-rolled**. We have the illusion of a clean architecture with a 1:1 demo — and a wall waiting when the vehicle adds a second service.
 
@@ -410,8 +395,8 @@ That independence is real and valuable — but it does not solve everything by i
 
 ---
 
-## What Comes Next (Stage 2 Preview)
+## What Comes Next (Phase 2 Preview)
 
-In Stage 2 we keep the same lightweight UDS connection but **refactor the application layer** around uProtocol's core abstractions — `UUri` addressing, `UAttributes` intent, `UPayloadFormat` enforcement, and the `UListener` callback model — so business logic becomes declarative instead of a tangle of offset math and socket reads.
+In Phase 2 we keep the same lightweight UDS connection but **refactor the application layer** around uProtocol's core abstractions — `UUri` addressing, `UAttributes` intent, `UPayloadFormat` enforcement, and the `UListener` callback model — so business logic becomes declarative instead of a tangle of offset math and socket reads.
 
-The thermal logging engine and true multi-subscriber fan-out wait until the transport story catches up in Stage 3. For now, recognise the wall — and why the next layer of uProtocol exists.
+The thermal logging engine and true multi-subscriber fan-out wait until the transport story catches up in Phase 3. For now, recognise the wall — and why the next layer of uProtocol exists.
