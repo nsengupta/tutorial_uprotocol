@@ -2,15 +2,30 @@
 
 ## Prologue
 
-The story begins when I has been exploring the world of Eclipse-SDV out of curiosity. This was an area hitherto completely unknown to me. Yet, I was drawn towards it. Why? I have captured the reasons in [this blog post](https://nsengupta.github.io/blog/why-explore-software-defined-vehicle/).
+The story begins when I had been exploring the world of Eclipse-SDV out of curiosity. This was an 
+area hitherto completely unknown to me. Yet, I was drawn towards it. Why? I have captured the reasons in [this blog post](https://nsengupta.github.io/blog/why-explore-software-defined-vehicle/).
 
-One of the technologies that had captured my interest was [uProtocol](https://github.com/eclipse-uprotocol). I am familiar with the problem it was trying to solve (I have worked in the area of location-agnostic, multi-machine-architecture-friendly, network-carried, multiplex-able middleware for a good part of my career), but the domain was different. My aim was to understand the landscape well, and Eclipse SDV sites helped; so did the uProtocol repo, blogs (viz., [here]([Articles | plog](https://petelevasseur.com/articles/index.html))), and YouTube videos — but what I didn't find was a classical tutorial; a tutorial which helped a software developer to lay her/his hands on the code to solidify the understanding along with the specifications and examples, and helped create a mental map of _what was what_.
+One of the technologies that had captured my interest was [uProtocol](https://github.com/eclipse-uprotocol). I am familiar with the problem it was trying to solve (I have worked in the area of location-agnostic, multi-machine-architecture-friendly, network-carried, multiplex-able middleware for a good part of my career), but the domain was different. 
+
+My aim was to understand the landscape well, and Eclipse SDV sites helped; so did the uProtocol repo, blogs (viz., Pete Le Vasseur's [Articles | plog](https://petelevasseur.com/articles/index.html)), and YouTube videos — but what I didn't find was a classical tutorial; a tutorial which helped a software developer to lay her/his hands on the code to solidify the understanding along with the specifications and examples, and helped create a mental map of _what was what_.
 
 So, I decided to write one myself. This tutorial follows how I approached learning uProtocol; hopefully, this will be useful for you too.
 
 - We start with **raw Unix Domain Sockets** and manually frame uProtocol `UMessage` bytes.
 - Then we refactor behind uProtocol's own L1 (`UTransport` / `UListener`) and L2 (`SimplePublisher` / `CallOptions`) abstractions — still on the same UDS wire. 
 - Then, we **replace the transport with Zenoh**, add a second subscriber (the thermal logger mentioned in Phase 1), and prove that business logic survives the change of transport (from *Unix Domain Socket* to *Zenoh*).
+
+## What we will learn
+
+- How uProtocol's `UUri`, `UAttributes`, `UPayload`, and `UMessage` map to the wire.
+- Why stream transports (Unix Domain Sockets) need explicit length-prefix framing.
+- How uProtocol's L1 (`UTransport` / `UListener`) separates message moving from message handling.
+- How uProtocol's L2 (`SimplePublisher` / `CallOptions`) separates publishing intent from envelope construction.
+- Why UDS fails for multi-process fan-out **even on one host** — and why a data-space transport (Zenoh) replaces it.
+- How swapping the L1 transport plugin leaves publisher and subscriber business logic unchanged.
+- How `UUri` metadata becomes first-class routing information in Zenoh (vs opaque bytes on a UDS socket).
+- How L3 PUBLISH registration lets independent processes subscribe to the same resource URI.
+
 
 ## Repository layout
 
@@ -50,7 +65,7 @@ Follow the tutorials for each phase, kept under [`tutorial-text/`](./tutorial-te
 | [`Tutorial-Phase-2.md`](./tutorial-text/Tutorial-Phase-2.md) | **Phase 2 — uProtocol semantics.** A Unix Domain Socket-based transport is wrapped behind uProtocol's L1 (`UTransport`, `UListener`) and L2 (`SimplePublisher`, `CallOptions`). The raw CAN-frame packing is replaced by a protobuf schema (`bms_telemetry.proto`). The transport crate handcrafted (`up-uds-transport`) centralizes framing and dispatch; application code no longer touches sockets or byte headers. |
 | [`Tutorial-Phase-3.md`](./tutorial-text/Tutorial-Phase-3.md) | **Phase 3 — Zenoh topology.** UDS retires; Zenoh (`up-transport-zenoh`) becomes the L1 plugin. Same `SimplePublisher` and `UListener` bodies, but a second process (`up-thermal-logging-subscriber`) receives the same stream independently — the fan-out payoff Phase 1 promised and Phase 2 documented but could not deliver. All on one Linux host with a local Zenoh router.                                       |
 
-The `docs/` directory holds all my notes, technical reference for each phase, including code walkthroughs, architectural diagrams, and design decisions, in case you are interested to know how I thought through the issues, and took decisions. I indeed have taken some help from [Cursor](https://cursor.com) and [Ralph](https://ralphy-server.fly.dev/) for writing draft code, but the concept behind this tutorial, and the choice of the problem and solutions as well the final code-structure/code are entirely mine. 
+The `docs/` directory holds all my notes, technical reference for each phase, including code walkthroughs, architectural diagrams, and design decisions, in case you are interested to know how I thought through the issues, and took decisions. 
 
 ## Quick start — run the demo
 
@@ -114,26 +129,22 @@ cargo run --manifest-path phases/03_zenoh_topology/Cargo.toml -p up-battery-tele
 
 Expected: both subscribers receive all five messages independently — no shared socket path, no broker in application code. The publisher and battery subscriber `on_receive` bodies are **identical** to Phase 2; only transport construction changed.
 
-## What we will learn
+### Prerequisites
 
-- How uProtocol's `UUri`, `UAttributes`, `UPayload`, and `UMessage` map to the wire.
-- Why stream transports (Unix Domain Sockets) need explicit length-prefix framing.
-- How uProtocol's L1 (`UTransport` / `UListener`) separates message moving from message handling.
-- How uProtocol's L2 (`SimplePublisher` / `CallOptions`) separates publishing intent from envelope construction.
-- Why UDS fails for multi-process fan-out **even on one host** — and why a data-space transport (Zenoh) replaces it.
-- How swapping the L1 transport plugin leaves publisher and subscriber business logic unchanged.
-- How `UUri` metadata becomes first-class routing information in Zenoh (vs opaque bytes on a UDS socket).
-- How L3 PUBLISH registration lets independent processes subscribe to the same resource URI.
-
-## Prerequisites
-
-- Rust toolchain (edition 2024)
+- Rust toolchain (edition 2024, in my set-up)
 - Linux (Unix Domain Sockets for Phases 1–2; Phase 3 demo also runs on Linux)
 - **Phase 3 only:** [Zenoh](https://zenoh.io/) with `zenohd` available on your PATH
 - No prior uProtocol knowledge assumed
 
+### Declaration
+
+I indeed have taken some help from [Cursor](https://cursor.com) and [Ralph](https://ralphy-server.fly.dev/) for writing draft code, but 
+the concept behind this tutorial, and the choice of the problem and solutions as well the final 
+documentation/code-structure/code are entirely mine.
+
 ## License
 
-TBD
+This project is licensed under the [Apache License, Version 2.0](./LICENSE.txt).
 
----
+The entire tutorial text, notes, and sample Rust code in `phases/` are covered by that license 
+unless noted otherwise.
