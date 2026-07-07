@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
+
 //! Shared BMS telemetry protobuf types and demo constants (Phase 2 → Phase 3 copy-forward).
 //!
 //! Schema: `proto/bms_telemetry.proto` — generated at build time by `build.rs`.

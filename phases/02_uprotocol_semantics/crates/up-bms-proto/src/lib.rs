@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
+
 //! Shared BMS telemetry protobuf types and Stage 2 demo constants.
 //!
 //! The `.proto` schema lives at `proto/bms_telemetry.proto`; Rust types are generated

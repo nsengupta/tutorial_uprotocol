@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
+
 use tokio::io::AsyncReadExt;
 use tokio::net::UnixListener;
 use std::io::{Write, stdout};

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     protobuf_codegen::Codegen::new()
         .protoc()

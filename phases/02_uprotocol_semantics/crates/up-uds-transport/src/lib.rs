@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
+
 //! UDS-backed [`UTransport`] for local length-framed uProtocol messages.
 //!
 //! - [`UdsTransport::serve`] binds a Unix socket, accepts connections, and dispatches

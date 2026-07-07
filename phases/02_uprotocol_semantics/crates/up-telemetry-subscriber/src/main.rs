@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
+
 use std::sync::{
     atomic::{AtomicU32, Ordering},
     Arc,

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
+
 use std::sync::Arc;
 
 // Phase-1 used ttl: Some(5000) on UAttributes. Here we pass the same TTL

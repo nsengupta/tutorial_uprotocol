@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
+
 use tokio::net::UnixStream;
 use tokio::io::AsyncWriteExt;
 use up_rust::{UUri, UAttributes, UMessage, UMessageType, UPayloadFormat};
