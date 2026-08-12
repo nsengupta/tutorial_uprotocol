@@ -7,14 +7,16 @@ use std::io::{Write, stdout};
 
 use up_frame_codec::deserialize_for_unix_socket;
 
-const SOCKET_PATH: &str = "/tmp/uprotocol_twin.sock";
-
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    // Clean up dead nodes from previous runs before binding.
-    let _ = std::fs::remove_file(SOCKET_PATH);
-    let listener = UnixListener::bind(SOCKET_PATH)?;
-    println!("Battery telemetry subscriber listening on: {}", SOCKET_PATH);
+    // Bind under `{cwd}/tmp/` (create the directory if needed; clean stale socket).
+    let socket_path = up_frame_codec::ensure_socket_dir()?;
+    let _ = std::fs::remove_file(&socket_path);
+    let listener = UnixListener::bind(&socket_path)?;
+    println!(
+        "Battery telemetry subscriber listening on: {}",
+        socket_path.display()
+    );
 
     loop {
         let (mut stream, _) = listener.accept().await?;

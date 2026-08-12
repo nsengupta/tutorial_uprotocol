@@ -1,29 +1,20 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
 
-use tokio::net::UnixStream;
 use tokio::io::AsyncWriteExt;
-use up_rust::{UUri, UAttributes, UMessage, UMessageType, UPayloadFormat};
-use up_rust::communication::UPayload;
-use protobuf::MessageField;
+use tokio::net::UnixStream;
 use rand::Rng;
+use up_rust::{UMessageBuilder, UPayloadFormat, UUri};
 
 use up_frame_codec::serialize_for_unix_socket;
-
-const SOCKET_PATH: &str = "/tmp/uprotocol_twin.sock";
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     println!("--- Battery telemetry publisher starting ---");
 
-    // 1. Build a source uURI for the battery telemetry publisher entity.
-    let source_uri = UUri {
-        authority_name: "local_vehicle".to_string(),
-        ue_id: 0x1010,
-        ue_version_major: 1,
-        resource_id: 0x8001,
-        ..Default::default()
-    };
+    // 1. Build a source UUri for the battery telemetry publisher entity.
+    //    Pattern: authority + numeric entity + version + numeric resource.
+    let source_uri = UUri::try_from_parts("my_own_car", 0x1010, 1, 0x8001)?;
 
     // 2. Build and send 5 messages with random battery/temperature values.
     let mut rng = rand::rng();
@@ -34,27 +25,17 @@ async fn main() -> Result<(), anyhow::Error> {
 
         println!("Message {}: SoC = {:.1}%, Temp = {}°C", i, battery_pct, temp_c);
 
-        let u_payload = UPayload::new(
-            pack_bms_can_frame(battery_pct, temp_c).to_vec(),
-            UPayloadFormat::UPAYLOAD_FORMAT_RAW);
-
-        let attributes = UAttributes {
-            id: MessageField::from(Some(up_rust::UUID::build())),
-            type_: UMessageType::UMESSAGE_TYPE_PUBLISH.into(),
-            source: Some(source_uri.clone()).into(),
-            ttl: Some(5000),
-            ..Default::default()
-        };
-
-        let message = UMessage {
-            attributes: Some(attributes).into(),
-            payload: Some(u_payload.payload()),
-            ..Default::default()
-        };
+        let message = UMessageBuilder::publish(source_uri.clone())
+            .with_ttl(5000)
+            .build_with_payload(
+                pack_bms_can_frame(battery_pct, temp_c).to_vec(),
+                UPayloadFormat::UPAYLOAD_FORMAT_RAW,
+            )?;
 
         let framed = serialize_for_unix_socket(&message)?;
 
-        let mut stream = UnixStream::connect(SOCKET_PATH).await?;
+        let socket_path = up_frame_codec::socket_path()?;
+        let mut stream = UnixStream::connect(&socket_path).await?;
         stream.write_all(&framed).await?;
         stream.flush().await?;
 

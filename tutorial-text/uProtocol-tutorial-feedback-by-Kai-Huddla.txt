@@ -1,0 +1,33 @@
+Hey @Nirmalya Sengupta awesome work on the tutorial :+1:
+I really like the gradual evolving of the custom processes into full fledged uEntities. In the first phase I noticed some aspects that you might want to adapt to more recent developments in up-rust. In the upcoming release of up-rust, the constructors for UAttributes and UMessage will no longer be public. Instead, application code will need to use the UMessageBuilder struct to build messages. This provides more guidance as for which fields are required for which type of message and makes the whole process less error prone. Also, the UPayload type is only helpful in the context of the L2 APIs. The L1 API is only concerned with UMessage instances and the UMessageBuilder has functions build() and build_with_payload() for creating a message with or without a payload. You might therefore want to defer the introduction of UPayload to phase 2 ...
+
+
+On a similar note, UUri instances need to be created using the UUri::try_from_parts constructor or by parsing a URI (i.e. a string) using UUri::from_str.
+
+The Phase 1 document's section eplaining the UUri structure also needs a little rework because a UUri 's entity type ID and resource ID need to be string representation's of unsigned integers, i.e. you cannot use powertrain.battery as an entity type ID and you can also not use battery_soc as a resource ID. Please refer to the current version of UUri spec for details
+
+
+Some notes regarding the Phase 2 document:
+The architecture diagram contains a UdsTransportClient component on the publisher's side and a UdsTransport component on the subscriber's side. However, they both (should) use the same component (UdsTransport)  which provides for bi-directional communication via its send and register_listener functions.
+
+
+In general, I was confused at first by your usage of the UDS acronym which often stands for the Unified Diagnostic Services in the automotive domain, In your case, it is the UNIX Domain Socket you are talking about. I would suggest to make this more obvious, e.g. by means of using DomainSocketTransport instead of UdsTransport ...
+
+
+In the Phase 3 document the description of the three layers of metadata is not really accurate. In fact, uProtocol only has one single level of metadata: the UAttributes. They contain all the metadata required for routing and describing the payload (if any). However, the UAttributes  are assembled from three sources when you use the L2 API (e.g. the SimplePublisher):
+
+1. The LocalUriProvider  which provides the source UUri.
+2. The CallOptions which provide basic message attributes like TTL and priority.
+3. UPayload which contains the payload format.
+
+
+On a side note: Not sure if you know this, but it is not strictly necessary to run a Zenoh broker process. The Zenoh clients can actually communicate in a  peer-to-peer fashion using Zenoh's local UDP based discovery protocol ...
+
+
+The section on L3 PUBLISH registration section is a little misleading. uProtocol defines a L3 (Application Layer) uSubscription service which is used to signal across the uProtocol network the interest of uEntities in topics from authorities that differ from the interested uEntity's local authority. This is mainly necessary in order to be able to provide transparent pub/sub semantics across different transports, e.g. a publisher connected to a Zenoh transport and a subscriber connected to an MQTT5 transport. The use case that you are describing, where publisher and subscriber(s) are all connected to the same transport (Zenoh) does not require this but can simply rely on Zenoh's (native) pub/sub functionality.
+
+
+Accordingly, Chapter 9 erroneously refers to L4 Discovery, which is actually provided by uProtocol's L3 uDiscovery service (for which we currently do not have an implementation).
+
+All in all, this is really great work and FMPOV we would be glad to have it as part of the uProtocol project.
+IMHO it should live in its own repository, given its generic nature (even if all the example code is based on up-rust). @Pete / ピート @Daniel Krippner WDYT?

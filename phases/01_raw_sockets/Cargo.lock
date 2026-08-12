@@ -614,7 +614,6 @@ name = "up-battery-telemetry-publisher"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "protobuf",
  "rand",
  "tokio",
  "up-frame-codec",
