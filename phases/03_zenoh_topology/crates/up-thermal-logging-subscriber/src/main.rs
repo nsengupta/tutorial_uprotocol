@@ -73,13 +73,11 @@ async fn main() -> Result<(), anyhow::Error> {
         shutdown: shutdown.clone(),
     });
 
-    // Phase 3 (§3.4) — Same Zenoh-backed UTransport as the battery subscriber.
-    // In its own process, L3 registration makes discovery independent of any socket path.
+    // Phase 3 — Same Zenoh-backed UTransport as the battery subscriber.
+    // Fan-out is Zenoh's native pub/sub (same transport) — not uProtocol L3 uSubscription.
     //
-    // The default Zenoh config uses UDP multicast scouting to discover
-    // a Zenoh router (zenohd) on the local network — no address needed
-    // on a single host. For a remote router, set:
-    //   config.connect.endpoints = vec!["tcp/<host>:7447".parse()?];
+    // Config::default() opens a Zenoh *peer* with UDP multicast scouting.
+    // Peers can discover each other without a zenohd router (peer-to-peer).
     let transport: Arc<dyn UTransport> =
         Arc::new(
             UPTransportZenoh::builder(AUTHORITY_NAME)

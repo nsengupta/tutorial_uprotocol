@@ -3,7 +3,7 @@
 > **Prerequisites:** Phase 2 (`tutorial-text/Tutorial-Phase-2.md`, code in `phases/02_uprotocol_semantics/`).  
 > **Active code:** `phases/03_zenoh_topology/` — copy-forward from Phase 2.
 
-Phase 2 ended with an honest confession: UDS works for one publisher and one subscriber on a single Linux host, but it breaks the moment you need a second consumer — even on the same machine. Phase 3 swaps the wire for **Zenoh** and delivers the fan-out payoff that Phase 1's thermal logger narrative promised.
+Phase 2 ended with an honest confession: Unix Domain Socket works for one publisher and one subscriber on a single Linux host, but it breaks the moment we need a second consumer — even on the same machine. Phase 3 swaps the wire for **Zenoh** and delivers the fan-out payoff that Phase 1's thermal logger narrative promised.
 
 **Demo scope:** All processes run on **one Linux host** (separate terminals), same as Phases 1–2. The cross-ECU vehicle story is narrative only — we do not simulate multiple machines.
 
@@ -11,275 +11,258 @@ Let's dive in.
 
 ---
 
-### Chapter 1: Why UDS had to retire (recap)
+### Chapter 1: Why Unix Domain Sockets had to retire (recap)
 
-Phase 2's `up-uds-transport` solved the right problem: separating business logic from socket I/O using `UTransport`. But the UDS wire itself still had three hard limits **on one host**:
+Phase 2's `up-unix-domain-socket-transport` solved the right problem: separating business logic from socket I/O using `UTransport`. But the Unix Domain Socket **wire** still fails on one host when we need:
 
-| Limit                                        | What broke                                                   | Why UDS cannot fix it                                                   |
-| -------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------- |
-| **1 — No fan-out**                           | Two subscriber processes cannot both receive the same stream | UDS is point-to-point; the server process owns the socket               |
-| **2 — Filesystem path, not logical address** | `/tmp/uprotocol_twin.sock` is a filename, not a URI          | Two processes cannot `bind()` the same path; only one server can listen |
-| **3 — No location transparency**             | Publisher and subscriber must share a kernel                 | A socket path on one ECU's filesystem is invisible on another           |
+1. **Fan-out** — two subscriber *processes* cannot both receive the same stream (point-to-point; one bind owner).
+2. **A logical address** — `{cwd}/tmp/uprotocol_twin.sock` is a filename, not a URI; only one process can bind it.
+3. **Location transparency** — publisher and subscriber must share a kernel.
 
-These limits are **independent of topology**. They bite you on a single laptop, which is why Phase 3 retires `up-uds-transport` even before we mention cross-ECU.
-
-Let's draw the Phase 2 bottleneck so we can see it:
+These limits bite us on a single laptop, which is why Phase 3 retires `up-unix-domain-socket-transport` even before we mention cross-ECU:
 
 ```
-Same Linux host — Phase 2 UDS (still broken for fan-out)
+Same Linux host — Phase 2 Unix Domain Socket (still broken for fan-out)
 
   up-battery-telemetry-publisher          up-telemetry-subscriber
          │                                      ▲
-         │  one UDS connection                  │ UdsTransport::serve
-         └──────────────► /tmp/...sock ─────────┘ (one server process)
+         │  one Unix Domain Socket connection   │ UnixDomainSocketTransport::bind
+         └──────────────► {cwd}/tmp/...sock ────┘ (one bind-side process)
 
   up-thermal-logging-subscriber (what we want in Phase 3)
          │
          └── cannot share the stream — second process has no socket to read
-             (Phase 1 broker pseudo-code trap all over again)
 ```
-| Need on one host                         | UDS + `up-uds-transport`                    | Data-space transport (Zenoh)               |
-| ---------------------------------------- | ------------------------------------------- | ------------------------------------------ |
-| Second **process** as subscriber         | Not supported — turn subscriber into broker | Native pub/sub fan-out                     |
-| Publisher unchanged when consumer added  | N/A — architectural hack                    | Subscribe independently                    |
-| URI filter per consumer                  | In-process only                             | Each process registers its own `UListener` |
-| Avoid manual re-serialize / forward loop | Fails — Phase 1 pseudo-code                 | Transport handles distribution             |
 
-**We do not need a second machine to hit this wall.** Phase 1 introduced the thermal logging process as a second consumer on the same vehicle; Phase 2 made URI interest declarative but did not deliver bytes to a second process. That alone justifies retiring UDS for Phase 3 — before anyone moves an ECU.
+**We do not need a second machine to hit this wall.** Phase 1 introduced the thermal logging process as a second consumer; Phase 2 made URI interest declarative but did not deliver bytes to a second process. Zenoh's native pub/sub gives each process its own subscription without a manual forward loop.
 
-
-
-> We are not exploring multiple Zone ECUs in this tutorial, intentionally. That's a very different area altogether. However, networked Zone ECUs is behaviorally similar to applications running on different Linux hosts. And, the aforementioned problem remains the same.
-
-
+> We are not exploring multiple Zone ECUs in this tutorial, intentionally. Networked Zone ECUs behave like apps on different Linux hosts — the same fan-out problem remains.
 
 ---
 
-### Chapter 2: Zenoh as data-space transport
+### Chapter 2: Zenoh on the same layer map
 
-[Zenoh](https://zenoh.io/) is a data-space transport: publish/subscribe with location transparency, broker-capable distribution, and native pub/sub fan-out. Eclipse uProtocol provides [`up-client-zenoh-rust`](https://github.com/eclipse-uprotocol/up-client-zenoh-rust) — a `UTransport` implementation backed by Zenoh.
+[Zenoh](https://zenoh.io/) is a data-space transport: publish/subscribe with location transparency and native fan-out. Eclipse uProtocol provides [`up-transport-zenoh`](https://github.com/eclipse-uprotocol/up-transport-zenoh-rust) — a `UTransport` implementation backed by Zenoh.
 
-Zenoh decouples **who sends** from **who receives**:
+Phase 2 introduced the **canonical layer map**. Phase 3 keeps every band above the wire; we swap only the L1 plugin and the wire. Crates under `phases/03_zenoh_topology/` still pin `up-rust = "0.9.0"`.
 
 ```
-Phase 2 — UDS (one server owns the socket)
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Application / uEntity                                                      │
+│  publisher · battery subscriber · thermal subscriber                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  L3 — Application services (uSubscription, uDiscovery, …)                   │
+│  Not used in this demo — same authority (`my_own_car`) + same transport     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  L2 — Communication                                                         │
+│  SimplePublisher · CallOptions · UPayload          (unchanged from Phase 2) │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  L1 — Transport                                                             │
+│  UTransport · UListener · UPTransportZenoh         (plugin swap)            │
+│  send · register_listener                                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Envelope (every message)                                                   │
+│  UMessage · UAttributes (incl. source/sink UUri, payload format, …)         │
+│  (UUri is a field inside UAttributes — not a separate metadata layer)       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Wire                                                                       │
+│  Zenoh data space (peer mode by default; zenohd optional)                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-  Publisher ───► UdsTransport::serve ───► one subscriber
-                  (single process)
+Layer specs (same as Phase 2): [uP-L1](https://github.com/eclipse-uprotocol/up-spec/tree/main/up-l1),
+[uP-L2](https://github.com/eclipse-uprotocol/up-spec/tree/main/up-l2),
+[uP-L3](https://github.com/eclipse-uprotocol/up-spec/tree/main/up-l3).
+
+```
+Phase 2 — Unix Domain Socket (one process owns the socket)
+
+  Publisher ───► UnixDomainSocketTransport::bind ───► one subscriber
 
 
 Phase 3 — Zenoh (data space, no single-owner socket)
 
-  Publisher ───► Zenoh router ──┬──► subscriber 1 (battery telemetry)
-                                └──► subscriber 2 (thermal logging)
+  Publisher ───► Zenoh data space ──┬──► subscriber 1 (battery telemetry)
+                                    └──► subscriber 2 (thermal logging)
 ```
-Every process connects to a **local Zenoh router** (a lightweight daemon). The router handles distribution. Subscribers register `UListener` callbacks on URI filters — same API as Phase 2, but different transport plugin.
 
-#### UDS vs Zenoh — five limits compared
+What the wire swap buys us (same L1/L2 APIs):
 
-| Dimension              | Phase 2 — UDS (`up-uds-transport`)                    | Phase 3 — Zenoh (`up-client-zenoh-rust`)                    |
-| ---------------------- | ----------------------------------------------------- | ----------------------------------------------------------- |
-| **Fan-out**            | Point-to-point; one server, one stream per connection | Native pub/sub; N subscribers receive the same message      |
-| **Address**            | Filesystem path (`/tmp/…`) — single host              | URI + data space — network-native, no filesystem dependency |
-| **Listener ownership** | In-process `register_listener` table                  | Each process registers independently with the Zenoh router  |
-| **Framing**            | Manual 4-byte length prefix (`up-frame-codec`)        | Broker handles message boundaries                           |
-| **Cross-host**         | Impossible — no shared kernel                         | Location transparent — same API across ECUs                 |
+- **Fan-out** — N processes subscribe independently; no shared socket.
+- **Address** — URI-derived Zenoh keys, not a filesystem path.
+- **Listener ownership** — each process registers its own `UListener` via `UPTransportZenoh`.
+- **Framing** — Zenoh owns message boundaries (`up-frame-codec` retires).
+- **Cross-host readiness** — same APIs; this demo still runs on one host.
 
-The result: **Phase 2's business logic survives unchanged.** Only the transport plugin and session configuration change.
+Every process opens a Zenoh session (our demo uses **peer** mode with default config). Distribution happens in the data space — with or without a separate `zenohd` (Chapter 6).
 
 #### What Zenoh is not
 
-- **Not a replacement for uProtocol** — Zenoh is the *wire plugin* for uProtocol L1. uProtocol's `UUri`, `UAttributes`, `UMessage`, and `UListener` stay the same.
-- **Not a COVESA deep dive** — we use Zenoh as a data-space transport; we do not explore its full feature surface.
-- **Not a multi-host requirement** — the entire Phase 3 demo runs on one Linux host with a local Zenoh router.
+- **Not a replacement for uProtocol** — it is the *wire plugin* for L1.
+- **Not a COVESA deep dive** — we use Zenoh as a data-space transport only.
+- **Not a multi-host requirement** — the Phase 3 demo stays on one Linux host.
+- **Not a mandatory broker** — peers can scout each other over UDP multicast.
+- **Not L3 uSubscription** — same-transport fan-out stays on L1 `register_listener` (Chapter 5).
 
 ---
 
 ### Chapter 3: What uProtocol puts alongside the actual message
 
-Before we look at the code swap, let's understand what travels *with* each message. This matters because Zenoh uses this metadata in a way UDS could not.
+Before the code swap, recall what travels *with* each message. Zenoh uses parts of the envelope in a way Unix Domain Socket could not.
 
-uProtocol never sends a raw protobuf payload on the wire. Every `UMessage` carries **three layers of metadata** alongside the bytes:
+#### One metadata level: `UAttributes`
 
-| Layer                    | What it contains                                                                                             | Populated by                            |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------ | --------------------------------------- |
-| **UUri (source + sink)** | Authority name, uEntity ID, uEntity version, resource ID — the fully-qualified "who and what" of the message | `SimplePublisher` / `StaticUriProvider` |
-| **UAttributes**          | Priority, TTL, message type (PUBLISH, REQUEST, RESPONSE, etc.), correlation ID, timestamps                   | `CallOptions` + transport               |
-| **UPayload**             | The application bytes (here, the serialised `BatteryTelemetry` protobuf) plus a format hint                  | `UPayload::try_from_protobuf`           |
+uProtocol has **one** metadata level on the wire: **`UAttributes`**. They hold everything needed for routing and for describing the payload — message type, TTL, priority, source/sink `UUri`, correlation IDs, and so on.
 
-When our publisher calls:
+When we use the L2 API (e.g. `SimplePublisher`), those attributes are **assembled from three sources**:
+
+- **`LocalUriProvider` / `StaticUriProvider`** — source `UUri` (authority, entity, version, resource)
+- **`CallOptions`** — TTL, priority, …
+- **`UPayload`** — payload format hint (plus the application bytes)
 
 ```rust
-publisher.publish(BATTERY_TELEMETRY_RESOURCE_ID, CallOptions::for_publish(...), Some(payload))
+publisher.publish(
+    BATTERY_TELEMETRY_RESOURCE_ID,
+    CallOptions::for_publish(Some(5000), None, None), // app still chooses TTL
+    Some(payload),
+)
 ```
-`SimplePublisher` wraps the protobuf bytes into a `UMessage` with `UAttributes` (type=PUBLISH, TTL=5000ms) and a fully-qualified `UUri` (authority=`local_vehicle`, entity=`0x1010`, resource=`0x8001`). The resulting struct looks conceptually like:
+
+`SimplePublisher` builds a `UMessage` whose `UAttributes` combine those pieces (type=`PUBLISH`, TTL=5000 ms, source from the URI provider, format from `UPayload`). Conceptually:
 
 ```text
 UMessage {
-  attributes: UAttributes {
+  attributes: UAttributes {   // ← the single metadata level
     type: PUBLISH,
     ttl: 5000,
-    priority: STANDARD,
-    source: UUri { authority: "local_vehicle", ue_id: 0x1010, ue_version: 1, resource_id: 0x8001 },
-    sink: UUri { authority: "local_vehicle", ue_id: 0xFFFF, ue_version: 255, resource_id: 0x0000 },
+    source: UUri { authority: "my_own_car", ue_id: 0x1010, ue_version: 1, resource_id: 0x8001 },
+    // … other attribute fields as applicable …
   },
-  payload: UPayload { value: [protobuf bytes], format: PROTOBUF },
+  payload: <protobuf bytes>,  // format recorded in attributes
 }
 ```
-This is not "raw data plus a header." It is a **self-describing message envelope** designed to be routed, filtered, and inspected without deserializing the payload.
 
-#### Why UDS did not (and could not) make use of this metadata
+`UUri` is not a separate metadata layer beside `UAttributes`. Source and sink are **fields inside**
+`UAttributes` — composed into that single metadata level, not peers of it.
 
-In Phase 2, the `UMessage` envelope was assembled and serialised by `SimplePublisher`, then given to `UdsTransportClient::send`. But the UDS transport treats the envelope as **opaque bytes to stream over a socket**:
+#### Why Unix Domain Sockets did not use this for routing
 
-```text
-UDS flow (Phase 2)
+In Phase 2, `SimplePublisher` assembled the envelope, then `UnixDomainSocketTransport::send` treated it as **opaque bytes** on a socket path. Listener matching lived only in a local table inside the bind-side process. The `UUri` in `UAttributes` did not route on the wire.
 
-  Publisher                    UdsTransportClient          UdsTransport::serve          Subscriber
-     │                                 │                          │                          │
-     │──UMessage (UUri+Attr+Payload)──►│                          │                          │
-     │                                 │──length-prefixed bytes──►│                          │
-     │                                 │   (via up-frame-codec)   │──de-frame + UMessage─────►│
-     │                                 │                          │──match UUri against──────►│
-     │                                 │                          │   local listener table    │ on_receive
-```
-Key point: the UDS transport does **not** inspect the `UUri` or `UAttributes` to route the message. The metadata is embedded in the serialised bytes but is functionally dead weight for UDS — the socket path `/tmp/uprotocol_twin.sock` already decided the destination. UDS delivers everything to whoever is listening on that one path, regardless of what the `UUri` says. The `register_listener` matching happens in the **subscriber's own process**, inside `UdsTransport`'s local `HashMap` — it is not used by the wire.
+> **Unix Domain Socket has no routing layer** — one socket, one connection, one direction.
 
-> **UDS cannot use the uProtocol metadata for routing** because UDS has no routing layer. There is one socket, one connection, one direction. The `UUri` is present in the serialised bytes but plays no role in transport-level delivery.
+#### How Zenoh makes the envelope useful
 
-#### How Zenoh makes the metadata useful
+Zenoh is **content-aware**. When `UPTransportZenoh` receives a `UMessage` via `UTransport::send`:
 
-Zenoh is a **content-aware router**, not a byte pipe. When `up-transport-zenoh` receives a `UMessage` via `UTransport::send`, it does *not* forward opaque bytes. Instead:
-
-1. It **reads the `UUri`** from the envelope and maps it to a Zenoh key expression — e.g. `local_vehicle/0x1010/1/0x8001`.
-2. It **publishes** the payload bytes tagged with that key expression into the Zenoh data space.
-3. On the subscriber side, `UPTransportZenoh` registers a **Zenoh subscriber** on the key expression matching the listener's `source_filter`.
-4. When a Zenoh publication arrives, it reconstructs the `UMessage` and calls `UListener::on_receive`.
+1. It **reads the source `UUri`** from `UAttributes` and maps it to a Zenoh key expression (e.g. derived from `my_own_car` / `0x1010` / `1` / `0x8001`).
+2. It **publishes** into the Zenoh data space under that key.
+3. Each subscriber's `UPTransportZenoh` registers a **Zenoh subscriber** for its `source_filter`.
+4. Arriving publications are reconstructed as `UMessage` and delivered to `UListener::on_receive`.
 
 ```text
 Zenoh flow (Phase 3)
 
-  Publisher                    UPTransportZenoh         Zenoh router (zenohd)       UPTransportZenoh          Subscriber
-     │                                 │                          │                          │                    │
-     │──UMessage (UUri+Attr+Payload)──►│                          │                          │                    │
-     │                                 │──extract UUri────────    │                          │                    │
-     │                                 │──publish(ZenohKey,──►────►──fan-out to matching────►────reconstruct─────► on_receive
-     │                                 │   payload)               │   subscribers            │   UMessage         │
-     │                                 │                          │                          │                    │
-     │                                 │                          ├──fan-out to thermal──────►────reconstruct─────► on_receive
-     │                                 │                          │   subscriber             │   UMessage         |      
+  Publisher              UPTransportZenoh         Zenoh data space        UPTransportZenoh          Subscriber
+     │                          │                        │                         │                    │
+     │──UMessage───────────────►│                        │                         │                    │
+     │                          │──publish(key, …)──────►│──fan-out to matches────►│──reconstruct──────► on_receive
+     │                          │                        │──fan-out to thermal────►│──reconstruct──────► on_receive
 ```
-**What changed:** the `UUri` and `UAttributes` that were opaque bytes on a UDS socket are now **first-class routing information** for the Zenoh data space. The Zenoh router matches key expressions to subscribers ; very similar to the way the UDS layer used the `UUri` <u>only inside</u> its own `HashMap`, but now the matching happens **in the network**.
 
-|                   | UDS (Phase 2)                                    | Zenoh (Phase 3)                                           |
-| ----------------- | ------------------------------------------------ | --------------------------------------------------------- |
-| Metadata location | Encoded in opaque bytes                          | Inspected by transport, exposed in Zenoh key              |
-| Routing           | Socket path decides destination                  | `UUri`-derived key expression decides fan-out             |
-| Multi-subscriber  | Impossible (one server)                          | Native — each subscriber gets its own Zenoh subscription  |
-| Listener matching | Local `HashMap` in `UdsTransport::serve` process | On the Zenoh router — any connected process can subscribe |
-
-**This is why uProtocol is designed to work with routers like Zenoh.** The envelope (`UUri` + `UAttributes` + `UPayload`) is not a wire format chosen for convenience — it is a **routing contract** that a content-aware transport can act on. UDS ignored that contract because it did not need to route; it only needed to stream. Zenoh *uses* the contract, and the result is fan-out, location transparency, and zero metadata re-invention by the application programmer.
+**What changed:** the `UUri` inside `UAttributes` is now **first-class routing information**. In Phase 2, matching lived only in a local `HashMap` inside the bind-side process. In Phase 3, matching spans **multiple processes** — and, if we deploy that way, **multiple hosts**.
 
 ---
 
-### Chapter 4: Code — swapping UDS for Zenoh
+### Chapter 4: Code — swapping Unix Domain Sockets for Zenoh
 
-The Phase 3 workspace (`phases/03_zenoh_topology/`) is a copy-forward from Phase 2 with two removals and one addition:
+The Phase 3 workspace (`phases/03_zenoh_topology/`) copy-forwards `up-bms-proto`, the publisher, and the battery subscriber. It **retires** `up-unix-domain-socket-transport` and `up-frame-codec`, and **adds** `up-transport-zenoh` plus `up-thermal-logging-subscriber`.
 
-| Retained from Phase 2                                          | Removed                      | Added                                              |
-| -------------------------------------------------------------- | ---------------------------- | -------------------------------------------------- |
-| `up-bms-proto` (protobuf schema, constants)                    | `up-uds-transport` — retired | `up-client-zenoh-rust` — Zenoh-backed `UTransport` |
-| `up-battery-telemetry-publisher` (same `SimplePublisher` loop) | `up-frame-codec` — retired   |                                                    |
-| `up-telemetry-subscriber` (same `UListener::on_receive` body)  |                              |                                                    |
-
-The only code change in the publisher and subscriber is **how the `UTransport` object is constructed**:
+The only application change in publisher and subscribers is **how the `UTransport` is constructed**. L2 (`SimplePublisher`, `CallOptions`, `UPayload`), URI filters, authority `my_own_car`, and the `BatteryTelemetry` schema stay as in Phase 2.
 
 ```rust
-// Phase 2 (UDS) — now retired
-// let transport: Arc<dyn UTransport> = Arc::new(UdsTransportClient::new(SOCKET_PATH));
+// Phase 2 (Unix Domain Socket) — retired
+// let transport = UnixDomainSocketTransport::connect(&socket_path);
 
-// Phase 3 (Zenoh)
-let zenoh_config = zenoh::Config::default();
-let session = zenoh::open(zenoh_config).await?;
-let transport: Arc<dyn UTransport> = Arc::new(ZenohTransport::new(session).await?);
+// Phase 3 (Zenoh) — same construction on every process
+let transport: Arc<dyn UTransport> = Arc::new(
+    UPTransportZenoh::builder(AUTHORITY_NAME)?
+        .with_config(zenoh_config::Config::default())
+        .build()
+        .await?,
+);
 ```
+
 Everything after that — `SimplePublisher::publish`, `register_listener`, `on_receive` — is unchanged.
 
 #### Publisher (same loop, Zenoh transport)
 
 ```rust
 // up-battery-telemetry-publisher/src/main.rs — Phase 3
-use up_client_zenoh_rust::ZenohTransportClient;
+use up_transport_zenoh::{zenoh_config, UPTransportZenoh};
 
-let transport: Arc<dyn UTransport> = Arc::new(ZenohTransportClient::new(config).await?);
+let transport: Arc<dyn UTransport> = Arc::new(
+    UPTransportZenoh::builder(AUTHORITY_NAME)?
+        .with_config(zenoh_config::Config::default())
+        .build()
+        .await?,
+);
 let publisher = SimplePublisher::new(transport, uri_provider);
 
-// The publish loop is identical to Phase 2 — see Tutorial-Phase-2 Chapter 7
 for i in 1..=EXPECTED_MESSAGE_COUNT {
     let telemetry = BatteryTelemetry { /* … */ };
     let payload = UPayload::try_from_protobuf(telemetry)?;
-    publisher.publish(BATTERY_TELEMETRY_RESOURCE_ID, CallOptions::for_publish(Some(5000), None, None), Some(payload)).await?;
+    publisher
+        .publish(
+            BATTERY_TELEMETRY_RESOURCE_ID,
+            CallOptions::for_publish(Some(5000), None, None), // TTL still the app's choice
+            Some(payload),
+        )
+        .await?;
 }
 ```
+
 #### Subscriber (same on_receive, Zenoh transport)
 
 ```rust
 // up-telemetry-subscriber/src/main.rs — Phase 3
-use up_client_zenoh_rust::ZenohTransportListener;
-
-let transport = ZenohTransportListener::new(config).await?;
+let transport: Arc<dyn UTransport> = Arc::new(
+    UPTransportZenoh::builder(AUTHORITY_NAME)?
+        .with_config(zenoh_config::Config::default())
+        .build()
+        .await?,
+);
 transport
     .register_listener(&source_filter, None, listener)
     .await?;
-
-// on_receive body is identical to Phase 2 — see Tutorial-Phase-2 Chapter 8
 ```
-The URI filter (`source_filter` with resource ID `0x8001`) works identically. The Zenoh router delivers only matching messages to each subscriber.
 
-#### Transport config — `SOCKET_PATH` replaced
+The URI filter (`source_filter` with resource ID `0x8001`) works identically. Zenoh delivers matching publications to each subscriber process.
 
-Phase 2's `SOCKET_PATH` constant (`/tmp/uprotocol_twin.sock`) is **legacy** — it exists in `up-bms-proto::constants` for historical comparison only. Phase 3 uses Zenoh session configuration:
+#### Transport config — socket path replaced
+
+Phase 2 used `{cwd}/tmp/uprotocol_twin.sock`. Phase 3 uses `zenoh_config::Config::default()` — a **peer** with UDP multicast scouting, no filesystem path, and **no required `zenohd`**.
+
+If we wanted an explicit remote endpoint (router or peer):
 
 ```rust
-// config for local Zenoh router — default UDP multicast scouting
-let config = zenoh::Config::default();
-let session = zenoh::open(config).await?;
-```
-If we wanted to connect to a remote Zenoh router instead, we would set an endpoint:
-
-```rust
-let mut config = zenoh::Config::default();
+let mut config = zenoh_config::Config::default();
 config.connect.endpoints = vec!["tcp/192.168.1.100:7447".parse()?];
-let session = zenoh::open(config).await?;
 ```
-On a single-host demo, the default config works — Zenoh discovers the local router via UDP multicast scouting: no path, port, or shared filesystem.
-
-#### What stayed exactly as Phase 2
-
-| Component                       | Phase 2                                       | Phase 3       |
-| ------------------------------- | --------------------------------------------- | ------------- |
-| `SimplePublisher::publish` loop | `publish(resource_id, call_options, payload)` | **Identical** |
-| `UListener::on_receive` body    | `extract_protobuf::<BatteryTelemetry>()`      | **Identical** |
-| URI filter                      | `source_filter` via `StaticUriProvider`       | **Identical** |
-| `up-bms-proto` constants        | `AUTHORITY_NAME`, `PUBLISHER_UE_ID`, etc.     | **Identical** |
-| `BatteryTelemetry` proto        | protobuf schema — SoC + temp                  | **Identical** |
 
 ---
 
-### Chapter 5: L3 registration and the thermal fan-out payoff
+### Chapter 5: Fan-out payoff — and what is *not* L3 uSubscription
 
-Phase 1 mentioned the **Thermal Management Logging Application** as a second consumer of the battery telemetry stream. It checks the temperature of the batteries and prints a warning if the temperature is over 25*c! 
+Phase 1 mentioned the **Thermal Management Logging Application** as a second consumer of the battery telemetry stream. It checks cell temperature and prints a warning if the temperature is over 25°C.
 
-If we had implemented it, the loggiin application would have to run in the same process as telemetry subscriber, because UDS was point-to-point. Phase 3 delivers what Phase 1 only described: an **independent thermal logging subscriber**. it is a separate application, that receives the <u>exact same</u> protobuf messages from the Zenoh data space.
+If we had implemented it on Unix Domain Socket, it would have had to live in the same process as the telemetry subscriber. Phase 3 delivers what Phase 1 only described: an **independent thermal logging subscriber** — a separate application that receives the same protobuf messages from the Zenoh data space.
 
 #### The thermal subscriber
 
 ```rust
 // up-thermal-logging-subscriber/src/main.rs — new in Phase 3
-use up_bms_proto::BatteryTelemetry;
-use up_rust::{UListener, UMessage, UTransport};
-
-struct ThermalLoggingListener;
+struct ThermalLoggingListener { /* … */ }
 
 #[async_trait]
 impl UListener for ThermalLoggingListener {
@@ -287,7 +270,7 @@ impl UListener for ThermalLoggingListener {
         if let Ok(telemetry) = msg.extract_protobuf::<BatteryTelemetry>() {
             let temp = telemetry.temp_celsius;
             if temp > 25 {
-                println!("⚠️  WARNING — cell temperature {temp}°C exceeds threshold");
+                println!("WARNING — cell temperature {temp}°C exceeds threshold");
             } else {
                 println!("Cell temperature {temp}°C — OK");
             }
@@ -295,85 +278,80 @@ impl UListener for ThermalLoggingListener {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
-    let zenoh_config = zenoh::Config::default();
-    let session = zenoh::open(zenoh_config).await?;
-    let transport: Arc<dyn UTransport> = Arc::new(ZenohTransport::new(session).await?);
-    let source_filter = /* resource URI for BATTERY_TELEMETRY_RESOURCE_ID */;
-    transport
-        .register_listener(&source_filter, None, Arc::new(ThermalLoggingListener))
-        .await?;
-    // … wait for EXPECTED_MESSAGE_COUNT …
-}
+// main: same UPTransportZenoh::builder + register_listener as the battery subscriber
 ```
-This listener extracts the same `BatteryTelemetry` struct as the battery subscriber, but applies **thermal-specific logic**. We observe that there is no new schema; no socket path and no shared process.
 
-#### L3 PUBLISH registration — what makes discovery work
+This listener extracts the same `BatteryTelemetry` struct, but applies **thermal-specific logic**. No new schema; no socket path; no shared process.
 
-Phase 2's `register_listener` was a **local operation**: it inserted the listener into an in-process hash table inside `UdsTransport::serve`. Only the process that owned the server socket could register.
+#### Transport-native pub/sub vs L3 uSubscription
 
-Phase 3 uses Zenoh's data space. When a publisher sends a message with resource ID `0x8001`, the Zenoh router delivers it to **all processes** that registered a listener on that URI filter (showed interest in that particular resource), regardless of which process they live in. This is called **L3 PUBLISH pattern registration** in uProtocol's terminology:
+Phase 2's `register_listener` was a **local** operation on the bind-side `UnixDomainSocketTransport`. Phase 3 still calls `register_listener` — but under Zenoh that interest is a **Zenoh subscription**. When the publisher sends resource `0x8001`, **every process** that registered a matching filter receives the message. That is **Zenoh's native pub/sub** (L1), not a special uProtocol L3 registration step.
 
-| Layer                    | Phase 2 (UDS)                          | Phase 3 (Zenoh)                                               |
-| ------------------------ | -------------------------------------- | ------------------------------------------------------------- |
-| L1 (transport)           | UDS stream, length-prefix framed       | Zenoh pub/sub, broker-delivered                               |
-| L2 (comm)                | `SimplePublisher`, `CallOptions`       | **Same API** — unchanged                                      |
-| L3 (routing / discovery) | Local listener table in server process | Data-space routing — any process on the network can subscribe |
+uProtocol also defines an L3 application service named **[uSubscription](https://github.com/eclipse-uprotocol/up-spec/tree/main/up-l3/usubscription)**. That service matters when a
+uEntity wants topics from a **different authority**, or when publisher and subscriber sit on
+**different transports** (for example Zenoh on one side and MQTT5 on the other) and still need
+transparent pub/sub. In those cases, transport-native interest alone is not enough; uSubscription
+signals that interest across the uProtocol network.
 
-In practice, the application code is the same — `register_listener` with a `UUri` filter. What changed is the **transport plugin underneath**: Phase 2's plugin could only deliver to listeners in the same process; Phase 3's plugin delivers to any process connected to the same Zenoh router.
+**This tutorial does not use uSubscription.** Our publisher and both subscribers share one
+authority (`my_own_car`) and one transport (Zenoh), so Zenoh's own pub/sub is sufficient. Fan-out
+here is only `UTransport::register_listener` + Zenoh — not an L3 “PUBLISH registration” step.
+Look back at the Chapter 2 layer map: the L3 band is present for orientation, and stays idle in this demo.
 
 ---
 
 ### Chapter 6: Running the multi-subscriber demo
 
-We need four terminals (or four tmux panes) — one for the Zenoh router, one for the publisher, two for the subscribers:
+**Peer-to-peer by default.** `Config::default()` uses Zenoh **peer** mode with UDP multicast scouting. Clients can discover each other **without** starting `zenohd`. A router remains optional (useful in larger deployments).
+
+Start the two subscribers first, then the publisher (three terminals):
 
 ```bash
-# Terminal 1 — Zenoh router (start this first)
-zenohd
-
-# Terminal 2 — battery publisher
-cargo run --manifest-path phases/03_zenoh_topology/Cargo.toml -p up-battery-telemetry-publisher
-
-# Terminal 3 — battery telemetry subscriber
+# Terminal 1 — battery telemetry subscriber
 cargo run --manifest-path phases/03_zenoh_topology/Cargo.toml -p up-telemetry-subscriber
 
-# Terminal 4 — thermal logging subscriber (new in Phase 3!)
+# Terminal 2 — thermal logging subscriber (new in Phase 3)
 cargo run --manifest-path phases/03_zenoh_topology/Cargo.toml -p up-thermal-logging-subscriber
+
+# Terminal 3 — battery publisher
+cargo run --manifest-path phases/03_zenoh_topology/Cargo.toml -p up-battery-telemetry-publisher
 ```
-The publisher sends five messages (same as Phases 1–2). Both subscribers receive all five. No process shares a socket, a listener table, or a filesystem path.
+
+Optional fourth terminal if we prefer a router:
+
+```bash
+zenohd
+```
+
+The publisher sends five messages (same as Phases 1–2). Both subscribers should receive all five. No process shares a socket, a listener table, or a filesystem path.
 
 Build the whole workspace:
 
 ```bash
 cargo build --manifest-path phases/03_zenoh_topology/Cargo.toml
 ```
+
 ---
 
 ### Chapter 7: A look at what we have done
-
-Let's look back at the architecture:
 
 ```
 ╔═════════════════════════════════════════════════════════════╗
 ║ Publisher (Phase 3)                                         ║
 ║                                                             ║
-║   battery_pct, temp_c                                       ║
-║      ↓                                                      ║
 ║   BatteryTelemetry { soc_percent, temp_celsius }            ║
 ║      ↓                                                      ║
-║   UPayload::try_from_protobuf → PUBLISH format              ║
+║   UPayload::try_from_protobuf (L2)                          ║
 ║      ↓                                                      ║
-║   SimplePublisher::publish(resource_id, ...)                ║
+║   SimplePublisher::publish(resource_id, CallOptions, ...)   ║
 ║      ↓                                                      ║
-║   ZenohTransport::send  →  Zenoh data space                 ║
+║   UPTransportZenoh::send  →  Zenoh data space               ║
 ╚═════════════════════════════════════════════════════════════╝
 
 ╔═════════════════════════════════════════════════════════════╗
 ║ Battery Subscriber (Phase 3)                                ║
 ║                                                             ║
-║   Zenoh data space  →  ZenohTransport                       ║
+║   Zenoh data space  →  UPTransportZenoh                     ║
 ║      ↓                                                      ║
 ║   filter match → UListener::on_receive(msg)                 ║
 ║      ↓                                                      ║
@@ -385,26 +363,28 @@ Let's look back at the architecture:
 ╔═════════════════════════════════════════════════════════════╗
 ║ Thermal Subscriber (Phase 3 — new)                          ║
 ║                                                             ║
-║   Zenoh data space  →  ZenohTransport                       ║
+║   Zenoh data space  →  UPTransportZenoh                     ║
 ║      ↓                                                      ║
 ║   filter match → UListener::on_receive(msg)                 ║
 ║      ↓                                                      ║
 ║   msg.extract_protobuf::<BatteryTelemetry>()                ║
 ║      ↓                                                      ║
-║   temp > 25°C? → ⚠️ WARNING  or  temp OK                    ║
+║   temp > 25°C? → WARNING  or  temp OK                       ║
 ╚═════════════════════════════════════════════════════════════╝
 ```
-Notice the shape: both subscribers are **structurally identical**. They differ only in what they *do* with the telemetry data. The transport, the protobuf extraction, the URI filter — all the same. That is the payoff.
+
+Notice the shape: both subscribers are **structurally identical**. They differ only in what they *do* with the telemetry data. That is the payoff.
 
 ---
 
 ### Chapter 8: What we learned
 
-- **Zenoh replaces UDS as the L1 transport** — same uProtocol API, different plugin.
-- **Fan-out works on one host also** — the thermal logger attaches without touching the battery subscriber.
+- **Zenoh replaces Unix Domain Sockets as the L1 transport** — same uProtocol API, different plugin.
+- **Fan-out works on one host** — the thermal logger attaches without touching the battery subscriber.
 - **Business logic survived the swap** — `SimplePublisher`, `UListener`, and `BatteryTelemetry` are unchanged.
-- **The uProtocol metadata that was opaque bytes on UDS is now first-class routing information** — `UUri` maps to Zenoh key expressions; the router delivers based on content, not socket path.
-- **L3 registration bridges discovery** — the publisher announces its resource to the data space; any connected process can subscribe.
+- **`UAttributes` is the single metadata level** — L2 assembles it from URI provider + `CallOptions` + `UPayload` format; Zenoh uses the embedded `UUri` for keys.
+- **Same-transport fan-out is Zenoh native pub/sub** — not L3 uSubscription (that service is for cross-authority / cross-transport interest).
+- **A Zenoh router is optional** — default peer config can scout peers over UDP multicast.
 - **Phase 2 limits are resolved** — fan-out, address, listener ownership, framing, and cross-host readiness.
 
 Phase 3 proves that uProtocol's layer design pays off: **swap the wire, keep the application**.
@@ -413,28 +393,26 @@ Phase 3 proves that uProtocol's layer design pays off: **swap the wire, keep the
 
 ### Chapter 9: Where we still fall short
 
-Phase 3 resolves the fan-out problem that Phase 1 identified and Phase 2 documented. Let's be honest about what we have not solved yet:
+Phase 3 resolves the fan-out problem that Phase 1 identified and Phase 2 documented. Still open:
 
-| Still open              | What would need to change                                                                  | Likely phase         |
-| ----------------------- | ------------------------------------------------------------------------------------------ | -------------------- |
-| No L4 service discovery | Listeners are still URI-filtered, but there is no central registry of "who publishes what" | Future               |
-| Hardcoded constants     | `AUTHORITY_NAME`, `PUBLISHER_UE_ID`, resource IDs live in `up-bms-proto::constants`        | Future (config file) |
-| Single-topic demo       | Only `BatteryTelemetry` (resource `0x8001`) — no mixed traffic                             | Future               |
-| Manual `zenohd` startup | The router must be launched before any process connects                                    | Production (systemd) |
+- **No L3 [uDiscovery](https://github.com/eclipse-uprotocol/up-spec/tree/main/up-l3/udiscovery)** — listeners are URI-filtered, but there is no registry of "who publishes what" (the service exists in the architecture; this tutorial has no implementation).
+- **Hardcoded constants** — `AUTHORITY_NAME`, entity/resource IDs live in `up-bms-proto::constants`.
+- **Single-topic demo** — only `BatteryTelemetry` (resource `0x8001`).
+- **Cross-transport pub/sub** — would involve L3 **uSubscription**, unused while all peers share Zenoh.
 
-These are **configuration and integration** problems, not architecture problems; and as such, those are beyond the scope of this tutorial. The uProtocol layer stack remains the right foundation.
+These are configuration / later-service gaps, not a failure of the L1/L2 design we already have.
 
 ---
 
 ### Appendix: Key takeaways
 
-1. **L1 (`UTransport` / `UListener`) absorbs the transport swap.** The publisher and subscriber binaries changed exactly one block of code — the transport construction. The business logic (publish loop, `on_receive`) is untouched.
+1. **L1 (`UTransport` / `UListener`) absorbs the transport swap.** The binaries changed the transport construction block. The business logic (publish loop, `on_receive`) is untouched.
 
-2. **Zenoh's data space enables fan-out where UDS could not.** A second subscriber attaches by running a new binary and registering the same URI filter. No socket sharing, no broker process, no `SOCKET_PATH`.
+2. **Zenoh's data space enables fan-out where Unix Domain Socket could not.** A second subscriber attaches by running a new binary and registering the same URI filter — no socket sharing, no `SOCKET_PATH`. A `zenohd` process is optional for this demo.
 
-3. **The uProtocol envelope is a routing contract, not a wire format.** `UUri` + `UAttributes` + `UPayload` exist alongside every message. UDS treated them as opaque bytes; Zenoh reads them as first-class routing information. The same metadata that was dead weight on a UDS socket becomes the key expression in the data space.
+3. **One metadata level: `UAttributes`.** Assembled at L2 from `LocalUriProvider` / `StaticUriProvider`, `CallOptions`, and `UPayload` format. Zenoh turns the source `UUri` into a key expression.
 
-4. **Phase 1's thermal logger finally gets its own process.** Three years of tutorial narrative (across three phases) resolved in one `cargo run` command in a fourth terminal.
+4. **Phase 1's thermal logger finally gets its own process.** Three phases of narrative resolve in one extra `cargo run`.
 
 ---
 
@@ -442,16 +420,18 @@ These are **configuration and integration** problems, not architecture problems;
 
 ```
 phases/02_uprotocol_semantics/           phases/03_zenoh_topology/
-(frozen — phases/02_uprotocol_semantics/)              (active — Phase 3 work)
+(frozen)                                 (active — Phase 3)
 ─────────────────────────────            ─────────────────────────────
 up-bms-proto                       ──►   up-bms-proto (copy-forward)
 up-battery-telemetry-publisher     ──►   up-battery-telemetry-publisher
 up-telemetry-subscriber            ──►   up-telemetry-subscriber
-up-uds-transport                   ──X   (retired)
+up-unix-domain-socket-transport    ──X   (retired)
 up-frame-codec                     ──X   (retired)
                                          up-thermal-logging-subscriber (new)
+                                         + dependency: up-transport-zenoh
 ```
-**Nothing was deleted from the repo** — Phase 2 code remains in `phases/02_uprotocol_semantics/` for side-by-side study. Phase 3 starts clean, carrying forward only the crates that make the fan-out demo.
+
+**Nothing was deleted from the repo** — Phase 2 code remains in `phases/02_uprotocol_semantics/` for side-by-side study.
 
 ---
 
@@ -469,12 +449,13 @@ message BatteryTelemetry {
   int32 temp_celsius = 2;
 }
 ```
-The publisher still creates `BatteryTelemetry`, still serialises with `prost`, still wraps in `UPayload`. The subscriber still extracts the same struct. Zenoh does not care what the payload bytes contain — it routes by `UUri`, not by schema.
+
+The publisher still creates `BatteryTelemetry`, wraps it with `UPayload::try_from_protobuf`, and publishes. Subscribers still `extract_protobuf`. Zenoh routes by `UUri`, not by schema.
 
 ---
 
 ### Appendix D: References
 
 - [Zenoh documentation](https://zenoh.io/docs/) — data-space transport overview
-- [Eclipse uProtocol — up-client-zenoh-rust](https://github.com/eclipse-uprotocol/up-client-zenoh-rust)
+- [Eclipse uProtocol — up-transport-zenoh-rust](https://github.com/eclipse-uprotocol/up-transport-zenoh-rust)
 - [Vehicle Signal Specification (VSS)](https://covesa.github.io/vehicle_signal_specification/) — COVESA standard for vehicle data modelling

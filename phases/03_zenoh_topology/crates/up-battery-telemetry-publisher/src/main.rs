@@ -23,12 +23,12 @@ async fn main() -> Result<(), anyhow::Error> {
         PUBLISHER_UE_VERSION,
     ));
 
-    // Phase 3 (§3.3) — Zenoh-backed UTransport via up-transport-zenoh.
-    // Replaces Phase 2's `UdsTransportClient` + `SOCKET_PATH`.
+    // Phase 3 — Zenoh-backed UTransport via up-transport-zenoh.
+    // Replaces Phase 2's UnixDomainSocketTransport::connect.
     //
-    // The default Zenoh config uses UDP multicast scouting to discover
-    // a Zenoh router (zenohd) on the local network — no address needed
-    // on a single host. For a remote router, set:
+    // Config::default() opens a Zenoh *peer* with UDP multicast scouting.
+    // Peers can discover each other without a zenohd router (peer-to-peer).
+    // An optional router is fine too; for a remote endpoint you can set:
     //   config.connect.endpoints = vec!["tcp/<host>:7447".parse()?];
     let transport: Arc<dyn UTransport> =
         Arc::new(

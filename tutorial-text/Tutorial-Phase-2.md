@@ -95,8 +95,8 @@ and typed Protobuf payloads.
 
 ### Chapter 2: The layers of uProtocol (a map)
 
-uProtocol is organized in layers. Keep these distinct — the names below are the ones the Phase 2
-code uses:
+uProtocol is organized in layers. This diagram is the **canonical layer map** for the tutorial —
+Phases 1 and 3 use the same stack; only which bands are active changes.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -113,7 +113,8 @@ code uses:
 │  "Move this UMessage; invoke matching listeners when it arrives"            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Envelope (every message)                                                   │
-│  UMessage · UAttributes · UUri · UPayloadFormat                             │
+│  UMessage · UAttributes (incl. source/sink UUri, payload format, …)         │
+│  (UUri is a field inside UAttributes — not a separate metadata layer)       │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Wire                                                                       │
 │  socket_path() → {cwd}/tmp/uprotocol_twin.sock                              │
@@ -124,7 +125,12 @@ code uses:
 Phase 1 lived mainly at the **envelope** and **wire** layers (builder → `UMessage` → framed
 socket bytes). Phase 2 introduces L1 (`UTransport`, `UListener`, `UnixDomainSocketTransport`) and
 L2 (`SimplePublisher`, `CallOptions`, `UPayload`). The wire stays a Unix Domain Socket with
-length-prefix framing — wrapped behind those abstractions.
+length-prefix framing — wrapped behind those abstractions. L3 application services
+(uSubscription, uDiscovery, …) are not part of this phase. Specs for those layers live in
+[uP-L1 (Transport)](https://github.com/eclipse-uprotocol/up-spec/tree/main/up-l1),
+[uP-L2 (Communication)](https://github.com/eclipse-uprotocol/up-spec/tree/main/up-l2), and
+[uP-L3 (Application)](https://github.com/eclipse-uprotocol/up-spec/tree/main/up-l3).
+Crates under `phases/02_uprotocol_semantics/` keep the same pin as Phase 1: `up-rust = "0.9.0"`.
 
 Both processes attach the **same** L1 type. Socket bind vs connect is wire setup, not a Client/Server
 split in the application model. L2 appears only on the publish path in this demo (`SimplePublisher`);
@@ -355,7 +361,7 @@ for this:
 ╚═══════════════════════════════════════════════╝
 ```
 `UTransport` says: "I know how to move a `UMessage` from point A to point B. I know how to
-accept registrations from interested parties. I know when to call those parties. You tell me
+accept registrations from interested parties. I know when to call those parties. We tell it
 _who_ is interested and _what_ we want to send; the transport handles the rest."
 
 This is not an abstraction for the joy of abstraction. It is a **responsibility boundary**.
@@ -742,7 +748,7 @@ business logic.
 
 | Aspect | Phase-2 (keep) | Phase-3 (replace wire) |
 |---|---|---|
-| Envelope | `UMessage`, `UAttributes`, `UUri` | Unchanged |
+| Envelope | `UMessage`, `UAttributes` (UUri inside) | Unchanged |
 | L2 patterns | `SimplePublisher`, `CallOptions`, `UPayload` | Unchanged |
 | L1 API | `UTransport::send`, `register_listener`, `UListener::on_receive` | **Same trait** — different plugin |
 | Physical transport | Unix Domain Socket + length framing | Zenoh (network-transparent) |
@@ -757,11 +763,11 @@ not relearning uProtocol in Phase-3 — we are unblocking topology.
 ### Appendix: Key takeaways
 
 1. **L1 (`UTransport` / `UListener`) separates message moving from message handling.**
-   Your business logic should implement `on_receive`, not `read_exact`. One type —
+   Our business logic should implement `on_receive`, not `read_exact`. One type —
    `UnixDomainSocketTransport` — with `connect` / `bind` for wire setup.
 
 2. **L2 (`SimplePublisher` / `CallOptions` / `UPayload`) separates intent from envelope construction.**
-   You say "publish" with a typed `UPayload` and options — the library fills in
+   We say "publish" with a typed `UPayload` and options — the library fills in
    `UMESSAGE_TYPE_PUBLISH` and message ID. **TTL stays the application's choice**, passed via
    `CallOptions::for_publish(Some(5000), ...)` (same 5 s window as Phase 1's `with_ttl(5000)`).
    Source URI comes from `StaticUriProvider`; payload format from `UPayload`.

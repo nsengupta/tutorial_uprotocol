@@ -14,7 +14,7 @@ solidify the understanding along with the specifications and examples, and helpe
 map of _what was what_. 
 
 So, I decided to write one myself. This tutrial follows how I approached learning uProtocol; 
-hopefully, this will be useful for you too.
+hopefully, this will be useful for us too.
 
 ----
 
@@ -24,7 +24,8 @@ hopefully, this will be useful for you too.
 
 We will build a small application using uProtocol's up-rust ([here](https://github.com/eclipse-uprotocol/up-rust)) implementation. Along the 
 way, we will clarify the _what_-s and the _why_-s. I believe this is good way to let things fall 
-in the appropriate _conceptual_ place.
+in the appropriate _conceptual_ place. Every crate under `phases/01_raw_sockets/` pins 
+`up-rust = "0.9.0"`; API links in this chapter point at that version on docs.rs.
 
 The application is simple. There exists:
 
@@ -85,10 +86,10 @@ fn pack_bms_can_frame(battery_level_pct: f32, temperature_c: i8) -> [u8; 8] {
 ```
 
 This array is the application _payload_ (raw bytes) that is transported and collected at the other 
-end. We want to put those bytes in a uProtocol envelope: a [UMessage](https://docs.rs/up-rust/latest/up_rust/struct.UMessage.html).
+end. We want to put those bytes in a uProtocol envelope: a [UMessage](https://docs.rs/up-rust/0.9.0/up_rust/struct.UMessage.html).
 
 Before we build the message, the envelope needs a **source** identity — who/what this PUBLISH is 
-from. That identity is a [UUri](https://docs.rs/up-rust/latest/up_rust/struct.UUri.html).
+from. That identity is a [UUri](https://docs.rs/up-rust/0.9.0/up_rust/struct.UUri.html).
 
 A UUri address is always:
 
@@ -117,9 +118,9 @@ We will revisit `UUri` in detail in Chapter 2.
 
 Application code should not assemble `UAttributes` / `UMessage` structs by hand. This tutorial 
 follows current recommended `up-rust` practice: build messages with 
-[UMessageBuilder](https://docs.rs/up-rust/latest/up_rust/struct.UMessageBuilder.html), which sets 
+[UMessageBuilder](https://docs.rs/up-rust/0.9.0/up_rust/struct.UMessageBuilder.html), which sets 
 the fields required for a **PUBLISH** correctly (and keeps the same pattern for other message 
-types when you meet them later).
+types when we meet them later).
 
 > **Side note:** In an upcoming `up-rust` release, the constructors for `UAttributes` and 
 > `UMessage` will no longer be public — another reason to learn the builder now rather than 
@@ -138,7 +139,7 @@ let message = UMessageBuilder::publish(source_uri)
   telemetry topic URI (`up://my_own_car/1010/1/8001`).
 - `with_ttl(5000)` sets a 5-second usefulness window.
 - `build_with_payload(bytes, format)` attaches the raw CAN bytes and a 
-  [UPayloadFormat](https://docs.rs/up-rust/latest/up_rust/enum.UPayloadFormat.html) hint (`RAW` here).
+  [UPayloadFormat](https://docs.rs/up-rust/0.9.0/up_rust/enum.UPayloadFormat.html) hint (`RAW` here).
 
 L1 is concerned with **`UMessage` instances**. The L2 helper type `UPayload` is useful with 
 communication APIs such as `SimplePublisher`; we defer it to Phase 2. Here we only need bytes + 
@@ -205,6 +206,26 @@ This is what we have seen:
 - Message **attributes** describe purpose, source, lifetime, and identity; the builder fills them in.
 - Payload **bytes** ride inside the `UMessage`.
 
+On the uProtocol layer map (the same stack Phases 2–3 will reuse), Phase 1 works at the bottom
+two bands only:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Application / uEntity                                                      │
+│  publisher · subscriber                                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  L2 — Communication          (Phase 2: SimplePublisher, UPayload, …)        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  L1 — Transport              (Phase 2: UTransport, UListener, …)            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Envelope (every message)    ← Phase 1                                      │
+│  UMessage · UAttributes (incl. source/sink UUri, payload format, …)         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Wire                        ← Phase 1                                      │
+│  Unix Domain Socket + length-prefix framing (`up-frame-codec`)              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
 ```
 ╔═══════════╗
 ║   UUri    ║
@@ -251,10 +272,10 @@ In application code we use the `UUri` type, which carries the same four fields. 
 with the supported constructors — not struct literals:
 
 ```rust
-// When you already know the numeric parts:
+// When we already know the numeric parts:
 let source_uri = UUri::try_from_parts("my_own_car", 0x1010, 1, 0x8001)?;
 
-// When you have a URI string:
+// When we have a URI string:
 let source_uri = UUri::from_str("up://my_own_car/1010/1/8001")?;
 ```
 
@@ -321,7 +342,7 @@ Different topic, **same four-part shape**.
 +--
 |
 | Rules exist to assign uEntity IDs. Read more about assignment of IDs to uEntities
-| [here](https://github.com/eclipse-uprotocol/up-spec/blob/ffca0bc3caf52dec69ea89a24991483a6fd49b47/up-l3/README.adoc#31-uentity-id-ranges).
+| [here](https://github.com/eclipse-uprotocol/up-spec/blob/main/up-l3/README.adoc#31-uentity-id-ranges).
 |
 +--
 ```
@@ -335,7 +356,7 @@ look at that envelope more carefully.
 ╚══════════════╝
 ```
 
-`UMessage` is the L1 unit you send and receive. Application code creates a PUBLISH message like 
+`UMessage` is the L1 unit we send and receive. Application code creates a PUBLISH message like 
 this (same path as the publisher crate):
 
 ```rust
@@ -367,8 +388,8 @@ a PUBLISH. Conceptually we care about:
 - **ttl** — usefulness window (we set 5000 ms).
 - **id** — unique message id (assigned by the builder).
 
-The complete data-model for _UAttributes_ is [here](https://docs.rs/up-rust/latest/up_rust/struct.UAttributes.html). 
-For other values that message `type` can have, see [here](https://docs.rs/up-rust/latest/up_rust/enum.UMessageType.html).
+The complete data-model for _UAttributes_ is [here](https://docs.rs/up-rust/0.9.0/up_rust/struct.UAttributes.html). 
+For other values that message `type` can have, see [here](https://docs.rs/up-rust/0.9.0/up_rust/enum.UMessageType.html).
 
 After the builder returns, we can **inspect** those attributes on the `UMessage`:
 

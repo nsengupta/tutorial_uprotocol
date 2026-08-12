@@ -2,7 +2,7 @@
 
 **This is the only document that tracks feedback-driven tutorial changes.** Do not add parallel DESIGN/TODO trackers; update this file instead.
 
-**Status:** Phase 1 (P1-1…P1-4) complete. Phase 2 (P2-1, P2-2 + L2 `UPayload`) complete. Phase 3+ open.  
+**Status:** Phase 1 (P1-1…P1-4) complete. Phase 2 (P2-1, P2-2 + L2 `UPayload`) complete. Phase 3 (P3-1…P3-4) complete. X-1 complete. X-2 complete.  
 **Source:** [`tutorial-text/uProtocol-tutorial-feedback-by-Kai-Huddla.txt`](uProtocol-tutorial-feedback-by-Kai-Huddla.txt)  
 **Path convention:** Always list **repo-relative paths** (clickable in most editors), e.g. `phases/01_raw_sockets/crates/up-battery-telemetry-publisher/src/main.rs`.
 
@@ -120,11 +120,11 @@ let message = UMessageBuilder::publish(source_uri)
 
 - [x] Docs: [`tutorial-text/Tutorial-Phase-2.md`](Tutorial-Phase-2.md) — rename sweep + L2 `UPayload` teaching (Chapter 7)
 - [x] Code: publisher / subscriber / bms-proto / workspace use new crate + `my_own_car`
-- [ ] Docs rename remaining references in [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md) (when Phase 3 pass)
+- [x] Docs rename remaining references in [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md) (done in Phase 3 pass)
 
 ---
 
-## Phase 3 — Metadata model, Zenoh topology, L3 semantics
+## Phase 3 — Metadata model, Zenoh topology, L3 semantics (complete 2026-08-12)
 
 ### Paths in scope
 
@@ -132,28 +132,33 @@ let message = UMessageBuilder::publish(source_uri)
 |------|------|
 | Tutorial | [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md) |
 | Workspace | [`phases/03_zenoh_topology/Cargo.toml`](../phases/03_zenoh_topology/Cargo.toml) |
+| BMS proto | [`phases/03_zenoh_topology/crates/up-bms-proto/src/lib.rs`](../phases/03_zenoh_topology/crates/up-bms-proto/src/lib.rs) |
 | Publisher | [`phases/03_zenoh_topology/crates/up-battery-telemetry-publisher/src/main.rs`](../phases/03_zenoh_topology/crates/up-battery-telemetry-publisher/src/main.rs) |
 | Subscriber | [`phases/03_zenoh_topology/crates/up-telemetry-subscriber/src/main.rs`](../phases/03_zenoh_topology/crates/up-telemetry-subscriber/src/main.rs) |
 | Thermal subscriber | [`phases/03_zenoh_topology/crates/up-thermal-logging-subscriber/src/main.rs`](../phases/03_zenoh_topology/crates/up-thermal-logging-subscriber/src/main.rs) |
 
-### P3-1. Fix “three layers of metadata” model
+### Checklist
 
-- [ ] Docs: [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md) — one metadata level (`UAttributes`); L2 assembles from LocalUriProvider + CallOptions + UPayload format.
+#### P3-1. Fix “three layers of metadata” model
 
-### P3-2. Optional Zenoh peer-to-peer (no broker required)
+- [x] Docs: [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md) — one metadata level (`UAttributes`); L2 assembles from LocalUriProvider + CallOptions + UPayload format.
 
-- [ ] Docs: [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md)
-- [ ] Optional demo paths under [`phases/03_zenoh_topology/`](../phases/03_zenoh_topology/) if added
+#### P3-2. Optional Zenoh peer-to-peer (no broker required)
 
-### P3-3. Correct “L3 PUBLISH registration” vs uSubscription / transport-native pub/sub
+- [x] Docs: [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md) Chapter 6 — peer default; `zenohd` optional
+- [x] Code comments: publisher / subscribers use `Config::default()` peer scouting (no separate P2P demo crate needed)
 
-- [ ] Docs: [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md) (esp. Chapter 5 / learning outcomes)
+#### P3-3. Correct “L3 PUBLISH registration” vs uSubscription / transport-native pub/sub
+
+- [x] Docs: [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md) Chapter 5 / learning outcomes
 - [x] Docs foreshadow softened in [`tutorial-text/Tutorial-Phase-2.md`](Tutorial-Phase-2.md) Chapter 12 (no incorrect L3 registration promise)
 
-### P3-4. Fix Chapter 9 “L4 Discovery” → L3 uDiscovery
+#### P3-4. Fix Chapter 9 “L4 Discovery” → L3 uDiscovery
 
-- [ ] Docs: [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md)
-- [ ] Sweep: [`tutorial-text/Tutorial-Phase-2.md`](Tutorial-Phase-2.md), [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md)
+- [x] Docs: [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md)
+- [x] Sweep: [`tutorial-text/Tutorial-Phase-2.md`](Tutorial-Phase-2.md) (already names L3 uDiscovery), [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md)
+
+Also aligned Phase 3 constants with Phases 1–2 (`my_own_car`; dropped legacy `SOCKET_PATH`).
 
 ---
 
@@ -161,22 +166,17 @@ let message = UMessageBuilder::publish(source_uri)
 
 ### X-1. Layer map consistency (Phases 1–3)
 
-- [ ] [`tutorial-text/Tutorial-Phase-1.md`](Tutorial-Phase-1.md)
-- [ ] [`tutorial-text/Tutorial-Phase-2.md`](Tutorial-Phase-2.md)
-- [ ] [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md)
+- [x] [`tutorial-text/Tutorial-Phase-1.md`](Tutorial-Phase-1.md) — foreshadow map (envelope + wire active)
+- [x] [`tutorial-text/Tutorial-Phase-2.md`](Tutorial-Phase-2.md) — canonical stack; `UUri` inside `UAttributes`
+- [x] [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md) — same stack + L3 band (idle) + Zenoh wire; tables reduced
 
 ### X-2. Spec / API references
 
-- [ ] UUri spec citations in [`tutorial-text/Tutorial-Phase-1.md`](Tutorial-Phase-1.md) (and later phases as edited)
-- [ ] Confirm pinned `up-rust` in phase `Cargo.toml` files under [`phases/`](../phases/)
-
-### X-3. Repository placement (organizational, non-tutorial)
-
-- [ ] Feedback note in [`tutorial-text/uProtocol-tutorial-feedback-by-Kai-Huddla.txt`](uProtocol-tutorial-feedback-by-Kai-Huddla.txt) — own-repo discussion with maintainers (no code path).
+- [x] UUri spec citations in [`tutorial-text/Tutorial-Phase-1.md`](Tutorial-Phase-1.md) (and later phases as edited) — `basics/uri.adoc`; uEntity ID ranges on `main`; L1/L2/L3 + uSubscription/uDiscovery links in Phases 2–3
+- [x] Confirm pinned `up-rust` in phase `Cargo.toml` files under [`phases/`](../phases/) — all crates `0.9.0`; each tutorial states the pin; docs.rs links use `/0.9.0/` not `/latest/`
 
 ---
 
 ## Suggested remaining order
 
-1. **Phase 3** (P3-1…P3-4) — [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md) + [`phases/03_zenoh_topology/`](../phases/03_zenoh_topology/) as needed
-2. **Cross-phase** (X-1, X-2), then X-3
+1. README / Notes / `docs/*` prose sweeps when asked (deferred from Phase 1–3 commits)
