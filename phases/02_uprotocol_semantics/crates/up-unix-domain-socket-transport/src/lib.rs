@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
 
-//! UDS-backed [`UTransport`] for local length-framed uProtocol messages.
+//! [`UnixDomainSocketTransport`] — a [`UTransport`] over a local Unix Domain Socket.
 //!
-//! - [`UdsTransport::serve`] binds a Unix socket, accepts connections, and dispatches
-//!   decoded [`UMessage`] values to registered [`UListener`] callbacks.
-//! - [`UdsTransportClient`] connects per send (matching the Stage 1 publisher pattern).
+//! Both processes use the **same** type:
+//! - [`UnixDomainSocketTransport::bind`] — owns the socket path, accepts connections,
+//!   dispatches to [`UListener`]s via [`UTransport::register_listener`].
+//! - [`UnixDomainSocketTransport::connect`] — send-only attachment to that path
+//!   ([`UTransport::send`]); listener registration is not available in this mode.
+//!
+//! Bind vs connect is wire setup for Unix Domain Sockets, not a Client/Server split
+//! in the uProtocol application model.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -39,16 +44,15 @@ impl RegisteredListener {
             return false;
         };
 
-        // Check the source: does this message's source URI match the registered filter?
         if !self.source_filter.matches(source) {
             return false;
         }
 
-        // Check the sink: if the registration has a sink filter, the message must
-        // carry a matching sink URI. If no sink filter was registered, the message
-        // must carry no sink (i.e. it's a broadcast/notification, not an RPC reply).
         if let Some(pattern) = &self.sink_filter {
-            attribs.sink.as_ref().is_some_and(|candidate| pattern.matches(candidate))
+            attribs
+                .sink
+                .as_ref()
+                .is_some_and(|candidate| pattern.matches(candidate))
         } else {
             attribs.sink.is_none()
         }
@@ -59,27 +63,52 @@ impl RegisteredListener {
     }
 }
 
-/// Server-side UDS transport: binds a socket path and dispatches to listeners.
-pub struct UdsTransport {
+/// L1 transport agent over a Unix Domain Socket (implements [`UTransport`]).
+pub struct UnixDomainSocketTransport {
     socket_path: PathBuf,
     listeners: Arc<RwLock<HashSet<RegisteredListener>>>,
+    /// `true` after [`Self::bind`] (accept loop running); `false` after [`Self::connect`].
+    accepts_connections: bool,
 }
 
-impl UdsTransport {
+impl UnixDomainSocketTransport {
+    /// Attach for sending only: connect to `socket_path` on each [`UTransport::send`].
+    pub fn connect(socket_path: impl AsRef<Path>) -> Arc<Self> {
+        Arc::new(Self {
+            socket_path: socket_path.as_ref().to_path_buf(),
+            listeners: Arc::new(RwLock::new(HashSet::new())),
+            accepts_connections: false,
+        })
+    }
+
     /// Bind `socket_path`, spawn the accept/dispatch loop, and return a shareable handle.
-    pub async fn serve(socket_path: impl AsRef<Path>) -> Result<Arc<Self>, UStatus> {
+    ///
+    /// Creates the parent directory when needed (see [`up_frame_codec::ensure_socket_dir`]).
+    pub async fn bind(socket_path: impl AsRef<Path>) -> Result<Arc<Self>, UStatus> {
         let socket_path = socket_path.as_ref().to_path_buf();
+        if let Some(parent) = socket_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| {
+                UStatus::fail_with_code(
+                    UCode::INTERNAL,
+                    format!("failed to create socket directory {}: {err}", parent.display()),
+                )
+            })?;
+        }
         let _ = std::fs::remove_file(&socket_path);
         let listener = UnixListener::bind(&socket_path).map_err(|err| {
             UStatus::fail_with_code(
                 UCode::INTERNAL,
-                format!("failed to bind Unix socket {}: {err}", socket_path.display()),
+                format!(
+                    "failed to bind Unix Domain Socket {}: {err}",
+                    socket_path.display()
+                ),
             )
         })?;
 
         let transport = Arc::new(Self {
             socket_path: socket_path.clone(),
             listeners: Arc::new(RwLock::new(HashSet::new())),
+            accepts_connections: true,
         });
 
         let dispatch_transport = Arc::clone(&transport);
@@ -100,7 +129,7 @@ impl UdsTransport {
         Ok(transport)
     }
 
-    /// Socket path this server is bound to.
+    /// Socket path this transport is attached to.
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
     }
@@ -108,22 +137,45 @@ impl UdsTransport {
     async fn dispatch(&self, message: UMessage) {
         let listeners = self.listeners.read().await;
         for registered in listeners.iter() {
-            // Only forward this message to listeners whose registered source/sink
-            // filters match the message's own source and (optional) sink URIs.
-            // This is uProtocol's URI-based filter mechanism — the transport delivers
-            // only to subscribers whose registered URI patterns match the message's source.
-            // Unlike a broker topic model, this is a direct URI match over a stream socket.
             if registered.matches_msg(&message) {
                 registered.on_receive(message.clone()).await;
             }
         }
     }
+
+    async fn send_framed(&self, message: UMessage) -> Result<(), UStatus> {
+        let framed = serialize_for_unix_socket(&message).map_err(|err| {
+            UStatus::fail_with_code(
+                UCode::INTERNAL,
+                format!("failed to frame UMessage: {err}"),
+            )
+        })?;
+
+        let mut stream = UnixStream::connect(&self.socket_path).await.map_err(|err| {
+            UStatus::fail_with_code(
+                UCode::UNAVAILABLE,
+                format!(
+                    "failed to connect to Unix Domain Socket {}: {err}",
+                    self.socket_path.display()
+                ),
+            )
+        })?;
+
+        stream.write_all(&framed).await.map_err(|err| {
+            UStatus::fail_with_code(UCode::INTERNAL, format!("failed to write message: {err}"))
+        })?;
+        stream.flush().await.map_err(|err| {
+            UStatus::fail_with_code(UCode::INTERNAL, format!("failed to flush stream: {err}"))
+        })?;
+
+        Ok(())
+    }
 }
 
 #[async_trait]
-impl UTransport for UdsTransport {
+impl UTransport for UnixDomainSocketTransport {
     async fn send(&self, message: UMessage) -> Result<(), UStatus> {
-        UdsTransportClient::new(&self.socket_path).send(message).await
+        self.send_framed(message).await
     }
 
     async fn register_listener(
@@ -132,6 +184,13 @@ impl UTransport for UdsTransport {
         sink_filter: Option<&UUri>,
         listener: Arc<dyn UListener>,
     ) -> Result<(), UStatus> {
+        if !self.accepts_connections {
+            return Err(UStatus::fail_with_code(
+                UCode::UNIMPLEMENTED,
+                "register_listener requires UnixDomainSocketTransport::bind on the receiving side",
+            ));
+        }
+
         verify_filter_criteria(source_filter, sink_filter)?;
 
         let registered = RegisteredListener {
@@ -157,6 +216,13 @@ impl UTransport for UdsTransport {
         sink_filter: Option<&UUri>,
         listener: Arc<dyn UListener>,
     ) -> Result<(), UStatus> {
+        if !self.accepts_connections {
+            return Err(UStatus::fail_with_code(
+                UCode::UNIMPLEMENTED,
+                "unregister_listener requires UnixDomainSocketTransport::bind on the receiving side",
+            ));
+        }
+
         let registered = RegisteredListener {
             source_filter: source_filter.to_owned(),
             sink_filter: sink_filter.map(|u| u.to_owned()),
@@ -175,84 +241,22 @@ impl UTransport for UdsTransport {
     }
 }
 
-/// Client-side UDS transport: opens a fresh connection per [`UTransport::send`].
-pub struct UdsTransportClient {
-    socket_path: PathBuf,
-}
-
-impl UdsTransportClient {
-    pub fn new(socket_path: impl AsRef<Path>) -> Self {
-        Self {
-            socket_path: socket_path.as_ref().to_path_buf(),
-        }
-    }
-}
-
-#[async_trait]
-impl UTransport for UdsTransportClient {
-    async fn send(&self, message: UMessage) -> Result<(), UStatus> {
-        let framed = serialize_for_unix_socket(&message).map_err(|err| {
-            UStatus::fail_with_code(
-                UCode::INTERNAL,
-                format!("failed to frame UMessage: {err}"),
-            )
-        })?;
-
-        let mut stream = UnixStream::connect(&self.socket_path).await.map_err(|err| {
-            UStatus::fail_with_code(
-                UCode::UNAVAILABLE,
-                format!(
-                    "failed to connect to Unix socket {}: {err}",
-                    self.socket_path.display()
-                ),
-            )
-        })?;
-
-        stream.write_all(&framed).await.map_err(|err| {
-            UStatus::fail_with_code(UCode::INTERNAL, format!("failed to write message: {err}"))
-        })?;
-        stream.flush().await.map_err(|err| {
-            UStatus::fail_with_code(UCode::INTERNAL, format!("failed to flush stream: {err}"))
-        })?;
-
-        Ok(())
-    }
-
-    async fn register_listener(
-        &self,
-        _source_filter: &UUri,
-        _sink_filter: Option<&UUri>,
-        _listener: Arc<dyn UListener>,
-    ) -> Result<(), UStatus> {
-        Err(UStatus::fail_with_code(
-            UCode::UNIMPLEMENTED,
-            "listener registration requires UdsTransport::serve on the receiving side",
-        ))
-    }
-
-    async fn unregister_listener(
-        &self,
-        _source_filter: &UUri,
-        _sink_filter: Option<&UUri>,
-        _listener: Arc<dyn UListener>,
-    ) -> Result<(), UStatus> {
-        Err(UStatus::fail_with_code(
-            UCode::UNIMPLEMENTED,
-            "listener registration requires UdsTransport::serve on the receiving side",
-        ))
-    }
-}
-
 async fn read_framed_message(mut stream: UnixStream) -> Result<UMessage, UStatus> {
     let mut len_bytes = [0u8; 4];
     stream.read_exact(&mut len_bytes).await.map_err(|err| {
-        UStatus::fail_with_code(UCode::INTERNAL, format!("failed to read length prefix: {err}"))
+        UStatus::fail_with_code(
+            UCode::INTERNAL,
+            format!("failed to read length prefix: {err}"),
+        )
     })?;
     let body_len = u32::from_be_bytes(len_bytes) as usize;
 
     let mut body_bytes = vec![0u8; body_len];
     stream.read_exact(&mut body_bytes).await.map_err(|err| {
-        UStatus::fail_with_code(UCode::INTERNAL, format!("failed to read message body: {err}"))
+        UStatus::fail_with_code(
+            UCode::INTERNAL,
+            format!("failed to read message body: {err}"),
+        )
     })?;
 
     UMessage::parse_from_bytes(&body_bytes).map_err(|err| {
@@ -265,19 +269,18 @@ mod tests {
     use super::*;
     use up_rust::{LocalUriProvider, MockUListener, StaticUriProvider, UMessageBuilder};
 
-    const SOCKET: &str = "/tmp/uprotocol_uds_transport_test.sock";
-
     #[tokio::test]
     async fn send_dispatches_to_matching_listener() {
-        let _ = std::fs::remove_file(SOCKET);
+        let socket = std::env::temp_dir().join("uprotocol_unix_domain_socket_transport_test.sock");
+        let _ = std::fs::remove_file(&socket);
         const RESOURCE_ID: u16 = 0x8001;
-        let uri_provider = StaticUriProvider::new("local_vehicle", 0x1010, 0x01);
+        let uri_provider = StaticUriProvider::new("my_own_car", 0x1010, 0x01);
 
         let mut mock = MockUListener::new();
         mock.expect_on_receive().times(1).return_const(());
         let listener = Arc::new(mock);
 
-        let server = UdsTransport::serve(SOCKET).await.unwrap();
+        let server = UnixDomainSocketTransport::bind(&socket).await.unwrap();
         server
             .register_listener(
                 &uri_provider.get_resource_uri(RESOURCE_ID),
@@ -287,10 +290,9 @@ mod tests {
             .await
             .unwrap();
 
-        // Allow the accept loop to bind.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let client = UdsTransportClient::new(SOCKET);
+        let client = UnixDomainSocketTransport::connect(&socket);
         client
             .send(
                 UMessageBuilder::publish(uri_provider.get_resource_uri(RESOURCE_ID))
@@ -300,6 +302,6 @@ mod tests {
             .await
             .unwrap();
 
-        let _ = std::fs::remove_file(SOCKET);
+        let _ = std::fs::remove_file(&socket);
     }
 }

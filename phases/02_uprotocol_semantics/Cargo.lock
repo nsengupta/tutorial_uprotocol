@@ -929,8 +929,9 @@ dependencies = [
  "rand",
  "tokio",
  "up-bms-proto",
+ "up-frame-codec",
  "up-rust",
- "up-uds-transport",
+ "up-unix-domain-socket-transport",
 ]
 
 [[package]]
@@ -983,12 +984,13 @@ dependencies = [
  "log",
  "tokio",
  "up-bms-proto",
+ "up-frame-codec",
  "up-rust",
- "up-uds-transport",
+ "up-unix-domain-socket-transport",
 ]
 
 [[package]]
-name = "up-uds-transport"
+name = "up-unix-domain-socket-transport"
 version = "0.1.0"
 dependencies = [
  "anyhow",

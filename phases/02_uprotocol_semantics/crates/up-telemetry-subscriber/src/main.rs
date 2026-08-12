@@ -11,7 +11,7 @@ use tokio::sync::Notify;
 use up_bms_proto::constants::*;
 use up_bms_proto::BatteryTelemetry;
 use up_rust::{LocalUriProvider, StaticUriProvider, UListener, UMessage, UTransport};
-use up_uds_transport::UdsTransport;
+use up_unix_domain_socket_transport::UnixDomainSocketTransport;
 
 struct BatteryTelemetryListener {
     received: Arc<AtomicU32>,
@@ -25,7 +25,7 @@ impl UListener for BatteryTelemetryListener {
             Ok(telemetry) => {
                 let count = self.received.fetch_add(1, Ordering::SeqCst) + 1;
                 log::trace!(
-                    "UListener::on_receive via up-uds-transport dispatch (message {count}/{EXPECTED_MESSAGE_COUNT})"
+                    "UListener::on_receive via UnixDomainSocketTransport dispatch (message {count}/{EXPECTED_MESSAGE_COUNT})"
                 );
                 println!(
                     "[Battery telemetry subscriber] Processing incoming telemetry...\n\
@@ -61,10 +61,11 @@ async fn main() -> Result<(), anyhow::Error> {
         shutdown: shutdown.clone(),
     });
 
-    let transport = UdsTransport::serve(SOCKET_PATH).await?;
+    let socket_path = up_frame_codec::ensure_socket_dir()?;
+    let transport = UnixDomainSocketTransport::bind(&socket_path).await?;
     log::trace!(
-        "using up-uds-transport receive path: UdsTransport::serve → {} (Stage 2 UTransport, not raw UnixListener loop)",
-        SOCKET_PATH
+        "using UnixDomainSocketTransport::bind → {} (L1 UTransport)",
+        socket_path.display()
     );
     transport
         .register_listener(&source_filter, None, listener)
@@ -75,7 +76,8 @@ async fn main() -> Result<(), anyhow::Error> {
 
     println!(
         "Battery telemetry subscriber listening on: {} (expecting {} messages)",
-        SOCKET_PATH, EXPECTED_MESSAGE_COUNT
+        socket_path.display(),
+        EXPECTED_MESSAGE_COUNT
     );
 
     shutdown.notified().await;

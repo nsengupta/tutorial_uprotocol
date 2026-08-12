@@ -2,7 +2,7 @@
 
 **This is the only document that tracks feedback-driven tutorial changes.** Do not add parallel DESIGN/TODO trackers; update this file instead.
 
-**Status:** Phase 1 (P1-1…P1-4) complete. Phase 2+ open.  
+**Status:** Phase 1 (P1-1…P1-4) complete. Phase 2 (P2-1, P2-2 + L2 `UPayload`) complete. Phase 3+ open.  
 **Source:** [`tutorial-text/uProtocol-tutorial-feedback-by-Kai-Huddla.txt`](uProtocol-tutorial-feedback-by-Kai-Huddla.txt)  
 **Path convention:** Always list **repo-relative paths** (clickable in most editors), e.g. `phases/01_raw_sockets/crates/up-battery-telemetry-publisher/src/main.rs`.
 
@@ -82,40 +82,45 @@ let message = UMessageBuilder::publish(source_uri)
 
 ---
 
-## Phase 2 — Transport naming & architecture accuracy
+## Phase 2 — Transport naming & architecture accuracy (complete 2026-08-12)
 
 ### Paths in scope
 
 | Role | Path |
 |------|------|
 | Tutorial | [`tutorial-text/Tutorial-Phase-2.md`](Tutorial-Phase-2.md) |
-| Transport crate | [`phases/02_uprotocol_semantics/crates/up-uds-transport/`](../phases/02_uprotocol_semantics/crates/up-uds-transport/) |
-| Transport lib | [`phases/02_uprotocol_semantics/crates/up-uds-transport/src/lib.rs`](../phases/02_uprotocol_semantics/crates/up-uds-transport/src/lib.rs) |
+| Transport crate | [`phases/02_uprotocol_semantics/crates/up-unix-domain-socket-transport/`](../phases/02_uprotocol_semantics/crates/up-unix-domain-socket-transport/) |
+| Transport lib | [`phases/02_uprotocol_semantics/crates/up-unix-domain-socket-transport/src/lib.rs`](../phases/02_uprotocol_semantics/crates/up-unix-domain-socket-transport/src/lib.rs) |
+| Frame codec | [`phases/02_uprotocol_semantics/crates/up-frame-codec/src/lib.rs`](../phases/02_uprotocol_semantics/crates/up-frame-codec/src/lib.rs) |
+| BMS proto | [`phases/02_uprotocol_semantics/crates/up-bms-proto/src/lib.rs`](../phases/02_uprotocol_semantics/crates/up-bms-proto/src/lib.rs) |
 | Publisher | [`phases/02_uprotocol_semantics/crates/up-battery-telemetry-publisher/src/main.rs`](../phases/02_uprotocol_semantics/crates/up-battery-telemetry-publisher/src/main.rs) |
 | Subscriber | [`phases/02_uprotocol_semantics/crates/up-telemetry-subscriber/src/main.rs`](../phases/02_uprotocol_semantics/crates/up-telemetry-subscriber/src/main.rs) |
 | Workspace | [`phases/02_uprotocol_semantics/Cargo.toml`](../phases/02_uprotocol_semantics/Cargo.toml) |
 
-### P2-1. Unify transport component in architecture diagrams
+### Locked type/crate names
 
-- [ ] Docs: [`tutorial-text/Tutorial-Phase-2.md`](Tutorial-Phase-2.md) — diagrams currently split `UdsTransportClient` vs `UdsTransport`; teach one bidirectional type (`send` + `register_listener`).
-- [ ] Code: [`phases/02_uprotocol_semantics/crates/up-uds-transport/src/lib.rs`](../phases/02_uprotocol_semantics/crates/up-uds-transport/src/lib.rs) (and callers under [`phases/02_uprotocol_semantics/crates/`](../phases/02_uprotocol_semantics/crates/)) — align implementation with that model.
+| Role | Name |
+|------|------|
+| L1 type | `UnixDomainSocketTransport` |
+| Crate | `up-unix-domain-socket-transport` |
+| Wire setup | `::connect` (publisher) · `::bind` (subscriber) |
+| Authority | `my_own_car` |
+| Socket path | `{cwd}/tmp/uprotocol_twin.sock` via `up_frame_codec::socket_path()` / `ensure_socket_dir()` |
 
-### P2-2. Never abbreviate as “UDS”; prefer `DomainSocketTransport` naming
+### Checklist
 
-**House rule:** docs always say **Unix Domain Socket(s)**; never `UDS`. (Prose sweep already done.)
+#### P2-1. Unify transport component in architecture diagrams
 
-- [x] Docs prose sweep: [`tutorial-text/`](./), [`docs/`](../docs/), [`README.md`](../README.md), [`Notes/`](../Notes/)
-- [ ] Docs/code rename: `UdsTransport` / `UdsTransportClient` / `up-uds-transport` → e.g. `DomainSocketTransport` / `up-domain-socket-transport` in:
-  - [`tutorial-text/Tutorial-Phase-2.md`](Tutorial-Phase-2.md)
-  - [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md) (historical Phase 2 references)
-  - [`phases/02_uprotocol_semantics/crates/up-uds-transport/`](../phases/02_uprotocol_semantics/crates/up-uds-transport/)
-  - [`phases/02_uprotocol_semantics/crates/up-battery-telemetry-publisher/src/main.rs`](../phases/02_uprotocol_semantics/crates/up-battery-telemetry-publisher/src/main.rs)
-  - [`phases/02_uprotocol_semantics/crates/up-telemetry-subscriber/src/main.rs`](../phases/02_uprotocol_semantics/crates/up-telemetry-subscriber/src/main.rs)
+- [x] Docs: [`tutorial-text/Tutorial-Phase-2.md`](Tutorial-Phase-2.md) — one type `UnixDomainSocketTransport` (`connect` / `bind`); no Client/Server twins.
+- [x] Code: [`phases/02_uprotocol_semantics/crates/up-unix-domain-socket-transport/`](../phases/02_uprotocol_semantics/crates/up-unix-domain-socket-transport/) (old `up-uds-transport` removed)
 
-Also introduce `UPayload` properly at L2 in Phase 2 (deferred from Phase 1) when editing:
+#### P2-2. Never abbreviate as “UDS”; use `UnixDomainSocketTransport` + L2 `UPayload`
 
-- [`tutorial-text/Tutorial-Phase-2.md`](Tutorial-Phase-2.md)
-- [`phases/02_uprotocol_semantics/crates/up-battery-telemetry-publisher/src/main.rs`](../phases/02_uprotocol_semantics/crates/up-battery-telemetry-publisher/src/main.rs)
+**House rule:** docs always say **Unix Domain Socket(s)**; never `UDS`.
+
+- [x] Docs: [`tutorial-text/Tutorial-Phase-2.md`](Tutorial-Phase-2.md) — rename sweep + L2 `UPayload` teaching (Chapter 7)
+- [x] Code: publisher / subscriber / bms-proto / workspace use new crate + `my_own_car`
+- [ ] Docs rename remaining references in [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md) (when Phase 3 pass)
 
 ---
 
@@ -143,7 +148,7 @@ Also introduce `UPayload` properly at L2 in Phase 2 (deferred from Phase 1) when
 ### P3-3. Correct “L3 PUBLISH registration” vs uSubscription / transport-native pub/sub
 
 - [ ] Docs: [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md) (esp. Chapter 5 / learning outcomes)
-- [ ] Docs foreshadow: [`tutorial-text/Tutorial-Phase-2.md`](Tutorial-Phase-2.md) if it promises L3 registration incorrectly
+- [x] Docs foreshadow softened in [`tutorial-text/Tutorial-Phase-2.md`](Tutorial-Phase-2.md) Chapter 12 (no incorrect L3 registration promise)
 
 ### P3-4. Fix Chapter 9 “L4 Discovery” → L3 uDiscovery
 
@@ -173,6 +178,5 @@ Also introduce `UPayload` properly at L2 in Phase 2 (deferred from Phase 1) when
 
 ## Suggested remaining order
 
-1. **Phase 2** (P2-1, P2-2 + L2 `UPayload` introduction) — text + code under [`phases/02_uprotocol_semantics/`](../phases/02_uprotocol_semantics/) and [`tutorial-text/Tutorial-Phase-2.md`](Tutorial-Phase-2.md)
-2. **Phase 3** (P3-1…P3-4) — [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md) + [`phases/03_zenoh_topology/`](../phases/03_zenoh_topology/) as needed
-3. **Cross-phase** (X-1, X-2), then X-3
+1. **Phase 3** (P3-1…P3-4) — [`tutorial-text/Tutorial-Phase-3.md`](Tutorial-Phase-3.md) + [`phases/03_zenoh_topology/`](../phases/03_zenoh_topology/) as needed
+2. **Cross-phase** (X-1, X-2), then X-3

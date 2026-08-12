@@ -1,5 +1,5 @@
 [package]
-name = "up-uds-transport"
+name = "up-unix-domain-socket-transport"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
