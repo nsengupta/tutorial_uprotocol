@@ -60,18 +60,22 @@ Follow the tutorials for each phase, kept under [`tutorial-text/`](./tutorial-te
 | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`Tutorial-Phase-1.md`](./tutorial-text/Tutorial-Phase-1.md) | **Phase 1 — Raw Unix Domain Sockets.** Build `UMessage` envelopes by hand, frame them with a 4-byte length prefix, and send over a Unix Domain Socket transport (but raw socket calls). Two processes — a publisher and a subscriber — exchange battery telemetry (SoC, temperature) as raw packed bytes. One sees every layer of the wire with no library hiding the details.                                                        |
 | [`Tutorial-Phase-2.md`](./tutorial-text/Tutorial-Phase-2.md) | **Phase 2 — uProtocol semantics.** A Unix Domain Socket-based transport is wrapped behind uProtocol's L1 (`UTransport`, `UListener`) and L2 (`SimplePublisher`, `CallOptions`). The raw CAN-frame packing is replaced by a protobuf schema (`bms_telemetry.proto`). The transport crate handcrafted (`up-unix-domain-socket-transport`) centralizes framing and dispatch; application code no longer touches sockets or byte headers. |
-| [`Tutorial-Phase-3.md`](./tutorial-text/Tutorial-Phase-3.md) | **Phase 3 — Zenoh topology.** Unix Domain Sockets retire; Zenoh (`up-transport-zenoh`) becomes the L1 plugin. Same `SimplePublisher` and `UListener` bodies, but a second process (`up-thermal-logging-subscriber`) receives the same stream independently — the fan-out payoff Phase 1 promised and Phase 2 documented but could not deliver. All on one Linux host; Zenoh **peer** mode by default (`zenohd` optional).                                       |
+| [`Tutorial-Phase-3.md`](./tutorial-text/Tutorial-Phase-3.md) | **Phase 3 — Zenoh topology.** Unix Domain Sockets retire; Zenoh (`up-transport-zenoh`) becomes the L1 plugin. Same `SimplePublisher` and `UListener` bodies, but a second process (`up-thermal-logging-subscriber`) receives the same stream independently — the fan-out payoff Phase 1 promised and Phase 2 documented but could not deliver. All on one Linux host (Zenoh peer mode).                                       |
 
 ## Quick start — run the demo
 
 Each phase is an independent Cargo workspace. Run all commands from the repo root.
 
+**Start order (all phases):** start every **subscriber first**, then the **publisher**. The publisher sends a short burst and exits; if no subscriber is listening yet, those messages are missed (especially visible in Phase 3’s multi-subscriber demo).
+
 ### Phase 1 — Raw sockets
+
+Start the subscriber, then the publisher (two terminals):
 
 ```bash
 cargo build --manifest-path phases/01_raw_sockets/Cargo.toml
 
-# Terminal 1 — subscriber
+# Terminal 1 — subscriber (start this first)
 cargo run --manifest-path phases/01_raw_sockets/Cargo.toml -p up-telemetry-subscriber
 
 # Terminal 2 — publisher (sends 5 messages, then exits)
@@ -80,13 +84,15 @@ cargo run --manifest-path phases/01_raw_sockets/Cargo.toml -p up-battery-telemet
 
 ### Phase 2 — uProtocol semantics
 
+Start the subscriber, then the publisher (two terminals):
+
 ```bash
 cargo build --manifest-path phases/02_uprotocol_semantics/Cargo.toml
 
-# Terminal 1 — subscriber
+# Terminal 1 — subscriber (start this first)
 cargo run --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-telemetry-subscriber
 
-# Terminal 2 — publisher
+# Terminal 2 — publisher (sends 5 messages, then exits)
 cargo run --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-battery-telemetry-publisher
 ```
 
@@ -100,29 +106,21 @@ cargo test --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-unix-d
 
 ### Phase 3 — Zenoh topology (multi-subscriber, single producer)
 
-**No `zenohd` required for the default demo.** Processes use Zenoh **peer** mode with UDP multicast scouting (`Config::default()` in the binaries). A router is optional. The demo runs on **one Linux host** — three terminals (subscribers first, then publisher).
+**Start both subscribers before the publisher** (three terminals). If the publisher runs first, its five messages can finish before either subscriber has registered interest. Background on Zenoh peer mode and why this demo does not use `zenohd`: [`tutorial-text/Tutorial-Phase-3.md`](./tutorial-text/Tutorial-Phase-3.md) (Chapter 6).
 
 ```bash
 cargo build --manifest-path phases/03_zenoh_topology/Cargo.toml
 ```
 
-Run the multi-subscriber demo:
-
 ```bash
-# Terminal 1 — battery telemetry subscriber
+# Terminal 1 — battery telemetry subscriber (start first)
 cargo run --manifest-path phases/03_zenoh_topology/Cargo.toml -p up-telemetry-subscriber
 
-# Terminal 2 — thermal logging subscriber (new in Phase 3)
+# Terminal 2 — thermal logging subscriber (start second; new in Phase 3)
 cargo run --manifest-path phases/03_zenoh_topology/Cargo.toml -p up-thermal-logging-subscriber
 
-# Terminal 3 — publisher (sends 5 messages, then exits)
+# Terminal 3 — publisher last (sends 5 messages, then exits)
 cargo run --manifest-path phases/03_zenoh_topology/Cargo.toml -p up-battery-telemetry-publisher
-```
-
-Optional fourth terminal if we prefer a router:
-
-```bash
-zenohd
 ```
 
 Expected: both subscribers receive all five messages independently — no shared socket path, no broker in application code. The publisher and battery subscriber `on_receive` bodies are **identical** to Phase 2; only transport construction changed.
@@ -131,7 +129,7 @@ Expected: both subscribers receive all five messages independently — no shared
 
 - Rust toolchain (edition 2024, in my set-up)
 - Linux (Unix Domain Sockets for Phases 1–2; Phase 3 demo also runs on Linux)
-- **Phase 3 only:** [Zenoh](https://zenoh.io/) via the `up-transport-zenoh` dependency (pulled by Cargo). `zenohd` is **optional**, not required for peer-mode scouting on one host
+- **Phase 3 only:** [Zenoh](https://zenoh.io/) via the `up-transport-zenoh` dependency (pulled by Cargo); no separate `zenohd` install for this demo
 - No prior uProtocol knowledge assumed
 
 ### Declaration
