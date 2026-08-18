@@ -8,8 +8,8 @@ Each tutorial chapter has a **frozen code snapshot** under `phases/`. Narrative 
 
 | Phase directory | Chapter | Code |
 |---|---|---|
-| `phases/01_raw_sockets/` | Phase 1 | `up-frame-codec`, publisher, subscriber — UDS length-framed `UMessage` |
-| `phases/02_uprotocol_semantics/` | Phase 2 | `up-bms-proto`, `up-uds-transport`, refactored publisher/subscriber — uProtocol L1/L2 over UDS |
+| `phases/01_raw_sockets/` | Phase 1 | `up-frame-codec`, publisher, subscriber — Unix Domain Socket length-framed `UMessage` |
+| `phases/02_uprotocol_semantics/` | Phase 2 | `up-bms-proto`, `up-unix-domain-socket-transport`, refactored publisher/subscriber — uProtocol L1/L2 over a Unix Domain Socket |
 
 The pre-migration layout (`crates/` at repo root) is **retired**. All chapter code on `main` lives under `phases/`.
 
@@ -19,13 +19,10 @@ Phase-by-phase tutorial and reference documents:
 
 | File | Description |
 |---|---|
-| `docs/Phase-0.md` | Historical baseline (`up-client` / `up-server` names) |
-| `docs/Phase-1.md` | Renamed crates, 1:1 UDS pub/sub, architectural wall narrative |
-| `docs/Phase-2.md` | Phase 2 complete (2.1–2.10) |
-| `docs/Phase-3.md` | Phase 3 — Zenoh swap, thermal fan-out |
 | `tutorial-text/Tutorial-Phase-1.md` | Consolidated Phase 1 tutorial |
 | `tutorial-text/Tutorial-Phase-2.md` | Phase 2 tutorial narrative |
 | `tutorial-text/Tutorial-Phase-3.md` | Phase 3 tutorial narrative |
+| `Notes/uProtocol-tutorial-feedback-by-Kai-Huddla.txt` | Maintainer feedback on the tutorial |
 
 ## Build and run
 
@@ -77,19 +74,19 @@ cargo run --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-telemet
 # Terminal 2 — publisher (sends 5 messages, then exits)
 cargo run --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-battery-telemetry-publisher
 ```
-Optional — trace logs confirming `up-uds-transport` path (`RUST_LOG=trace` on both).
+Optional — trace logs confirming `up-unix-domain-socket-transport` path (`RUST_LOG=trace` on both).
 
 Test the Phase 2 transport crate:
 
 ```bash
-cargo test --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-uds-transport
+cargo test --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-unix-domain-socket-transport
 ```
 Build individual crates:
 
 ```bash
 cargo build --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-frame-codec
 cargo build --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-bms-proto
-cargo build --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-uds-transport
+cargo build --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-unix-domain-socket-transport
 cargo build --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-telemetry-subscriber
 cargo build --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-battery-telemetry-publisher
 ```
@@ -105,13 +102,13 @@ Each phase is a self-contained workspace under `phases/`. On `main`, all phases 
 
 ## Phase 2 status
 
-**Complete** (sections 2.1–2.10): `docs/Phase-2.md`, `phases/02_uprotocol_semantics/` (`up-bms-proto`, `up-uds-transport`, refactored binaries). Verified: build, `up-uds-transport` test, 5-message demo.
+**Complete** (sections 2.1–2.10): `tutorial-text/Tutorial-Phase-2.md`, `phases/02_uprotocol_semantics/` (`up-bms-proto`, `up-unix-domain-socket-transport`, refactored binaries). Verified: build, `up-unix-domain-socket-transport` test, 5-message demo.
 
-**Your step:** commit when ready. Next narrative: `tutorial-text/Tutorial-Phase-2.md`. Next code chapter: Phase 3 (`docs/Phase-3.md`).
+**Your step:** commit when ready. Next narrative: `tutorial-text/Tutorial-Phase-2.md`. Next code chapter: Phase 3 (`tutorial-text/Tutorial-Phase-3.md`).
 
 ## Suggested README sections (TODO — migrate from here when writing final README)
 
 - Project purpose: beginner-friendly uProtocol tutorial for SDV engineers
-- Repository layout: `phases/` snapshots + `docs/Phase-*.md` and `tutorial-text/Tutorial-Phase-*.md` narratives
+- Repository layout: `phases/` snapshots + `tutorial-text/Tutorial-Phase-*.md` narratives
 - Build/run quick start per phase (copy from **Build and run** above)
 - Link to final published tutorial (TBD)

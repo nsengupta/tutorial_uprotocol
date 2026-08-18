@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
 
 //! Shared BMS telemetry protobuf types and Phase 2 demo constants.

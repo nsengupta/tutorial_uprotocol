@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
 
 //! [`UnixDomainSocketTransport`] — a [`UTransport`] over a local Unix Domain Socket.
