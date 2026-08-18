@@ -100,7 +100,7 @@ Demonstrate to the Eclipse SDV community and advanced systems engineers that uPr
 - [x] **3.3 Swap Transport Layers with Zero Business Logic Impact (§3.3):**
   Workspace trimmed to 4 crates: `up-bms-proto`, `up-battery-telemetry-publisher`, `up-telemetry-subscriber`, `up-thermal-logging-subscriber`. `todo!()` placeholders for Zenoh transport wiring. Business logic (publish loop, `on_receive`, `URI filters`) unchanged from Phase 2. See `tutorial-text/Tutorial-Phase-3.md` §3.3.
 - [x] **3.4 Bring in L3 Registration for PUBLISH + thermal fan-out (§3.4):**
-  Created `up-thermal-logging-subscriber` — independent binary with `ThermalLoggingListener` reading `temp_celsius` from `BatteryTelemetry`. Fan-out demo across 4 terminals (zenohd + publisher + battery subscriber + thermal subscriber). L3 registration documented as data-space vs local-listener-table contrast. See `tutorial-text/Tutorial-Phase-3.md` §3.4.
+  Created `up-thermal-logging-subscriber` — independent binary with `ThermalLoggingListener` reading `temp_celsius` from `BatteryTelemetry`. Fan-out demo across 3 terminals (publisher + battery subscriber + thermal subscriber); `zenohd` optional (peer mode default). L3 registration documented as data-space vs local-listener-table contrast. See `tutorial-text/Tutorial-Phase-3.md` §3.4.
 - [x] **3.5 Close the demo gap — wiring summary + CLI commands (§3.5):**
   Declarative end-to-end wiring table and terminal commands to run all four processes. See `tutorial-text/Tutorial-Phase-3.md` §3.5.
 - [x] **3.6 Key takeaway — the Phase 3 insight (§3.6):**
