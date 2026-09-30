@@ -1,24 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
 
+//! Phase 3 thermal subscriber: a second process on the same Zenoh stream, watching cell temperature.
+
 use std::sync::{
-    atomic::{AtomicU32, Ordering},
     Arc,
+    atomic::{AtomicU32, Ordering},
 };
 
 use async_trait::async_trait;
 use tokio::sync::Notify;
-use up_bms_proto::constants::*;
 use up_bms_proto::BatteryTelemetry;
+use up_bms_proto::constants::*;
 use up_rust::{LocalUriProvider, StaticUriProvider, UListener, UMessage, UTransport};
-use up_transport_zenoh::{zenoh_config, UPTransportZenoh};
+use up_transport_zenoh::{UPTransportZenoh, zenoh_config};
 
-/// Listener that logs temperature warnings and tracks message count.
-///
-/// §3.4 — a second consumer on the same Zenoh data space, demonstrating
-/// fan-out without sharing the battery subscriber's process or socket.
+/// Second consumer on the same stream — its own process, not a second listener in the battery app.
 struct ThermalLoggingListener {
-    received: Arc<AtomicU32>,
+    readings_seen: AtomicU32,
     shutdown: Arc<Notify>,
 }
 
@@ -27,10 +26,7 @@ impl UListener for ThermalLoggingListener {
     async fn on_receive(&self, msg: UMessage) {
         match msg.extract_protobuf::<BatteryTelemetry>() {
             Ok(telemetry) => {
-                let count = self.received.fetch_add(1, Ordering::SeqCst) + 1;
-                log::trace!(
-                    "ThermalLoggingListener::on_receive via transport dispatch (message {count}/{EXPECTED_MESSAGE_COUNT})"
-                );
+                let count = self.readings_seen.fetch_add(1, Ordering::SeqCst) + 1;
 
                 let temp = telemetry.temp_celsius;
                 if temp > 25 {
@@ -38,62 +34,41 @@ impl UListener for ThermalLoggingListener {
                         "[Thermal logging subscriber] ⚠️  WARNING — cell temperature {temp}°C exceeds 25°C threshold"
                     );
                 } else {
-                    println!(
-                        "[Thermal logging subscriber] Cell temperature {temp}°C — OK"
-                    );
+                    println!("[Thermal logging subscriber] Cell temperature {temp}°C — OK");
                 }
 
                 if count >= EXPECTED_MESSAGE_COUNT {
                     self.shutdown.notify_one();
                 }
             }
-            Err(err) => eprintln!(
-                "Failed to decode BatteryTelemetry payload: {err}"
-            ),
+            Err(err) => eprintln!("Failed to decode BatteryTelemetry payload: {err}"),
         }
     }
 }
 
 #[tokio::main]
-#[allow(unreachable_code, unused_variables)]
 async fn main() -> Result<(), anyhow::Error> {
-    env_logger::init();
-
-    let uri_provider = StaticUriProvider::new(
-        AUTHORITY_NAME,
-        PUBLISHER_UE_ID,
-        PUBLISHER_UE_VERSION,
-    );
+    let uri_provider =
+        StaticUriProvider::new(AUTHORITY_NAME, PUBLISHER_UE_ID, PUBLISHER_UE_VERSION);
     let source_filter = uri_provider.get_resource_uri(BATTERY_TELEMETRY_RESOURCE_ID);
 
-    let received = Arc::new(AtomicU32::new(0));
     let shutdown = Arc::new(Notify::new());
     let listener = Arc::new(ThermalLoggingListener {
-        received,
+        readings_seen: AtomicU32::new(0),
         shutdown: shutdown.clone(),
     });
 
-    // Phase 3 — Same Zenoh-backed UTransport as the battery subscriber.
-    // Fan-out is Zenoh's native pub/sub (same transport) — not uProtocol L3 uSubscription.
-    //
-    // Config::default() opens a Zenoh *peer* with UDP multicast scouting.
-    // Peers can discover each other without a zenohd router (peer-to-peer).
-    let transport: Arc<dyn UTransport> =
-        Arc::new(
-            UPTransportZenoh::builder(AUTHORITY_NAME)
-                .map_err(|e| anyhow::anyhow!("builder failed: {e}"))?
-                .with_config(zenoh_config::Config::default())
-                .build()
-                .await
-                .map_err(|e| anyhow::anyhow!("Zenoh transport build failed: {e}"))?,
-        );
+    // Same construction and register_listener as the battery subscriber — a second process.
+    let transport = UPTransportZenoh::builder(AUTHORITY_NAME)
+        .map_err(|e| anyhow::anyhow!("builder failed: {e}"))?
+        .with_config(zenoh_config::Config::default())
+        .build()
+        .await
+        .map_err(|e| anyhow::anyhow!("Zenoh transport build failed: {e}"))?;
 
     transport
-        .register_listener(&source_filter, None, listener)
+        .register_listener(&source_filter, None, listener.clone())
         .await?;
-    log::trace!(
-        "registered ThermalLoggingListener with source filter resource_id=0x{BATTERY_TELEMETRY_RESOURCE_ID:04x}"
-    );
 
     println!(
         "Thermal logging subscriber listening (expecting {} messages)",
@@ -101,6 +76,9 @@ async fn main() -> Result<(), anyhow::Error> {
     );
 
     shutdown.notified().await;
+    transport
+        .unregister_listener(&source_filter, None, listener)
+        .await?;
     println!("Received {EXPECTED_MESSAGE_COUNT} messages — exiting.");
 
     Ok(())

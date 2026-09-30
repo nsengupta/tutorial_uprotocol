@@ -1,8 +1,8 @@
 ### Prologue
 
 This is the second phase of the tutorial where we will build on everything that was established in Phase-1 (the previous chapter) and then some. So, if we
-have not read the previous tutorial [Phase 1 tutorial](Tutorial-Phase-1.md), please do so. The code 
-corresponding to that (previous) tutorial is in `phases/01_raw_sockets/`. This chapter's 
+have not read the previous tutorial [Phase 1 tutorial](Tutorial-Phase-1.md), please do so. The code
+corresponding to that (previous) tutorial is in `phases/01_raw_sockets/`. This chapter's
 code lives in `phases/02_uprotocol_semantics/`.
 
 
@@ -24,8 +24,8 @@ Let's dive in.
 
 ### Chapter 1: Where Phase-1 left us
 
-In Phase-1, we successfully sent a `UMessage` from the battery-telemetry-publisher to the 
-telemetry-subscriber over a Unix Domain Socket. We packed SoC and temperature into 8 RAW bytes 
+In Phase-1, we successfully sent a `UMessage` from the battery-telemetry-publisher to the
+telemetry-subscriber over a Unix Domain Socket. We packed SoC and temperature into 8 RAW bytes
 using `pack_bms_can_frame` and unpacked with `unpack_bms_can_frame`. It worked.
 
 But, let's re-read the subscriber code from Phase-1:
@@ -85,7 +85,7 @@ Both binaries embed transport details that do not belong in battery telemetry co
 - The **subscriber** does three jobs: accept a connection, read+decode a frame, interpret the payload
 - If we want a second consumer for the same telemetry (say, a thermal management logging engine),
   we cannot give it access to the subscriber's socket — there is only one accept loop.
-- The **payload** is RAW bytes with a secret CAN-byte layout. If we change the layout, then both 
+- The **payload** is RAW bytes with a secret CAN-byte layout. If we change the layout, then both
   sides must be updated in lockstep.
 
 Phase-2 fixes these using uProtocol's own facilities: L1 Transport, L2 Communication patterns,
@@ -142,7 +142,7 @@ we do not use it here (same-transport interest does not need it).
 │  Phase 2 — peer apps; same L1 transport on both sides                              │
 │                                                                                    │
 │  Publisher app                         Subscriber app                              │
-│  ┌───────────────────────────┐         ┌────────────────────────────────┐          
+│  ┌───────────────────────────┐         ┌────────────────────────────────┐
 │  │ BatteryTelemetry          │         │ BatteryTelemetryListener       │          │
 │  │ + UPayload                │         │ (impl UListener)               │          │
 │  └─────────────┬─────────────┘         └─────────────▲──────────────────┘          │
@@ -219,7 +219,7 @@ fn pack_bms_can_frame(soc_pct: f32, temp_c: f32) -> [u8; 8] {
 ```
 We can spot the problems:
 
-1. **Scale factors are buried in code.** `0.5` and `10.0` are kind of, magic numbers. If we 
+1. **Scale factors are buried in code.** `0.5` and `10.0` are kind of, magic numbers. If we
    change the SoC resolution from 0.5% to 0.1%, we must find and update both pack *and* unpack functions
    in lockstep. If we miss one, the subscriber prints garbage.
 
@@ -302,7 +302,7 @@ constants crate plus the shared frame-codec helpers keep the demo honest.
 
 ### Chapter 5: What does the Phase-1 subscriber *actually* do?
 
-Before we look at `up-unix-domain-socket-transport`, let's visit Phase-1 subscriber code 
+Before we look at `up-unix-domain-socket-transport`, let's visit Phase-1 subscriber code
 and trace what it does for every incoming message. The key section here:
 
 ```rust
@@ -341,8 +341,8 @@ Let's count the implicit responsibilities in that one spawned closure:
 Three responsibilities. Two of them have nothing to do with battery telemetry.
 
 If we wanted to add a second consumer — say, a thermal management logging engine — we would have
-to copy the socket-reading code. If we wanted to switch from Unix Domain Socket to another 
-transport - say, Zenoh - we would rewrite the socket-reading code. If we wanted to run two 
+to copy the socket-reading code. If we wanted to switch from Unix Domain Socket to another
+transport - say, Zenoh - we would rewrite the socket-reading code. If we wanted to run two
 listeners inside the same process (one for SoC, one for temperature), we would need to duplicate the accept loop or build our own dispatch table.
 
 **This is where a transport crate enters the story.**
@@ -398,14 +398,26 @@ transport
 The dispatch logic (simplified from the crate):
 
 ```rust
-for registered in listeners.iter() {
-    if registered.matches_msg(&message) {
-        registered.on_receive(message.clone()).await;
-    }
+let matching: Vec<_> = {
+    let guard = listeners.read().await;
+    guard
+        .iter()
+        .filter(|registered| registered.matches_msg_source(&message))
+        .cloned()
+        .collect()
+}; // drop the table lock before calling anyone
+for listener in matching {
+    listener.on_receive(message.clone()).await;
 }
 ```
-Where `matches_msg` uses `up-rust`'s `UUri::matches` — the same URI matching rules that
-`LocalTransport` uses. A listener fires when the source filter matches the message's source URI.
+Where `matches_msg_source` uses `up-rust`'s `UUri::matches` — source first, then sink.
+`sink_filter: None` matches messages that have **no sink** (typical PUBLISH). A listener
+fires when those filters match.
+
+`bind()` starts the accept loop immediately; `register_listener` is a later call. If the
+publisher runs first, an empty table **silently drops** the message — that is not a dispatch
+error. Start the subscriber first because the publisher is a short burst. That is a
+**run convention**, not something dispatch enforces.
 
 **`UnixDomainSocketTransport::connect`** — send-only attachment: connect per `send`, frame via
 `up-frame-codec`, write bytes:
@@ -446,12 +458,11 @@ Let's look at the publisher code. Compare it with the Phase-1 version from the p
 use up_bms_proto::constants::*;
 use up_bms_proto::BatteryTelemetry;
 use up_rust::communication::{CallOptions, Publisher, SimplePublisher, UPayload};
-use up_rust::{StaticUriProvider, UTransport};
+use up_rust::StaticUriProvider;
 use up_unix_domain_socket_transport::UnixDomainSocketTransport;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    env_logger::init();
     println!("--- Battery telemetry publisher starting ---");
 
     let uri_provider = Arc::new(StaticUriProvider::new(
@@ -460,8 +471,7 @@ async fn main() -> Result<(), anyhow::Error> {
         PUBLISHER_UE_VERSION,
     ));
     let socket_path = up_frame_codec::socket_path()?;
-    let transport: Arc<dyn UTransport> =
-        UnixDomainSocketTransport::connect(&socket_path);
+    let transport = Arc::new(UnixDomainSocketTransport::connect(&socket_path));
     let publisher = SimplePublisher::new(transport, uri_provider);
 
     let mut rng = rand::rng();
@@ -543,7 +553,7 @@ We implement this trait:
 
 ```rust
 struct BatteryTelemetryListener {
-    received: Arc<AtomicU32>,
+    telemetry_seen: AtomicU32,
     shutdown: Arc<Notify>,
 }
 
@@ -552,7 +562,7 @@ impl UListener for BatteryTelemetryListener {
     async fn on_receive(&self, msg: UMessage) {
         match msg.extract_protobuf::<BatteryTelemetry>() {
             Ok(telemetry) => {
-                let count = self.received.fetch_add(1, Ordering::SeqCst) + 1;
+                let count = self.telemetry_seen.fetch_add(1, Ordering::SeqCst) + 1;
                 println!(
                     "[Battery telemetry subscriber] Processing incoming telemetry...\n\
                      -> State of Charge: {:.1}%\n\
@@ -573,8 +583,6 @@ And wire it into `main`:
 ```rust
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    env_logger::init();
-
     let uri_provider = StaticUriProvider::new(
         AUTHORITY_NAME,
         PUBLISHER_UE_ID,
@@ -582,17 +590,16 @@ async fn main() -> Result<(), anyhow::Error> {
     );
     let source_filter = uri_provider.get_resource_uri(BATTERY_TELEMETRY_RESOURCE_ID);
 
-    let received = Arc::new(AtomicU32::new(0));
     let shutdown = Arc::new(Notify::new());
     let listener = Arc::new(BatteryTelemetryListener {
-        received,
+        telemetry_seen: AtomicU32::new(0),
         shutdown: shutdown.clone(),
     });
 
     let socket_path = up_frame_codec::ensure_socket_dir()?;
     let transport = UnixDomainSocketTransport::bind(&socket_path).await?;
     transport
-        .register_listener(&source_filter, None, listener)
+        .register_listener(&source_filter, None, listener.clone())
         .await?;
 
     println!(
@@ -602,6 +609,9 @@ async fn main() -> Result<(), anyhow::Error> {
     );
 
     shutdown.notified().await;
+    transport
+        .unregister_listener(&source_filter, None, listener)
+        .await?;
     println!("Received {EXPECTED_MESSAGE_COUNT} messages — exiting.");
     Ok(())
 }
@@ -623,6 +633,18 @@ the typed `BatteryTelemetry` struct.
 calls only those whose filters match. Phase-1's subscriber accepted every byte that arrived on
 the socket. Phase-2's subscriber says "only nudge me for resource 0x8001 from the battery entity."
 
+**Lifetime vs finite run.** Phase 1's subscriber never leaves its accept loop — after the publisher's
+burst you must **Ctrl+C**. That matched the lesson: a raw socket server that stays up. Phase 2 is
+a short demo of L1/L2: the listener counts with `telemetry_seen`, signals `Notify` at
+`EXPECTED_MESSAGE_COUNT` (5), and `main` unregisters then exits. You should see
+`Received 5 messages — exiting.` without pressing Ctrl+C. Same five-message publisher burst;
+different process lifetime on purpose.
+
+**Demo output uses `println!` / `eprintln!`.** What you see in the terminal is the walk-through.
+There is no parallel `log::trace!` path and no `RUST_LOG` setup in these binaries — Phase 1
+already taught that style; we keep it through Phase 2 and 3 so every run is readable without
+extra environment variables.
+
 ----
 
 ### Chapter 9: Build and run
@@ -631,7 +653,7 @@ the socket. Phase-2's subscriber says "only nudge me for resource 0x8001 from th
 # From the repo root
 cargo build --manifest-path phases/02_uprotocol_semantics/Cargo.toml
 
-# Terminal 1 — subscriber
+# Terminal 1 — subscriber first (the publisher is a short burst)
 cargo run --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-telemetry-subscriber
 
 # Terminal 2 — publisher
@@ -650,6 +672,9 @@ Battery telemetry subscriber listening on: .../tmp/uprotocol_twin.sock (expectin
 ... (5 messages total)
 Received 5 messages — exiting.
 ```
+
+Unlike Phase 1, you do **not** need Ctrl+C here. The exit line is the completion handshake from Chapter 8 (`Notify` after five messages). Phase 1 stayed in an accept loop on purpose; this phase exits on purpose.
+
 ----
 
 ### Chapter 10: Looking back at what we have done

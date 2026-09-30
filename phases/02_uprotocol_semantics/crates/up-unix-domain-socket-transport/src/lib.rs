@@ -24,8 +24,8 @@ use tokio::sync::RwLock;
 
 use up_frame_codec::serialize_for_unix_socket;
 use up_rust::{
-    verify_filter_criteria, ComparableListener, UCode, UListener, UMessage, UStatus, UTransport,
-    UUri,
+    ComparableListener, UCode, UListener, UMessage, UStatus, UTransport, UUri,
+    verify_filter_criteria,
 };
 
 #[derive(Eq, PartialEq, Hash)]
@@ -36,7 +36,8 @@ struct RegisteredListener {
 }
 
 impl RegisteredListener {
-    fn matches_msg(&self, msg: &UMessage) -> bool {
+    /// Source filter first, then sink: `None` matches messages that have no sink (typical PUBLISH).
+    fn matches_msg_source(&self, msg: &UMessage) -> bool {
         let Some(attribs) = msg.attributes.as_ref() else {
             return false;
         };
@@ -57,10 +58,6 @@ impl RegisteredListener {
             attribs.sink.is_none()
         }
     }
-
-    async fn on_receive(&self, msg: UMessage) {
-        self.listener.on_receive(msg).await;
-    }
 }
 
 /// L1 transport agent over a Unix Domain Socket (implements [`UTransport`]).
@@ -73,24 +70,33 @@ pub struct UnixDomainSocketTransport {
 
 impl UnixDomainSocketTransport {
     /// Attach for sending only: connect to `socket_path` on each [`UTransport::send`].
-    pub fn connect(socket_path: impl AsRef<Path>) -> Arc<Self> {
-        Arc::new(Self {
+    /// Wrap in `Arc` at the call site when `SimplePublisher` needs a shared handle.
+    pub fn connect(socket_path: impl AsRef<Path>) -> Self {
+        Self {
             socket_path: socket_path.as_ref().to_path_buf(),
             listeners: Arc::new(RwLock::new(HashSet::new())),
             accepts_connections: false,
-        })
+        }
     }
 
-    /// Bind `socket_path`, spawn the accept/dispatch loop, and return a shareable handle.
+    /// Bind `socket_path`, spawn the accept/dispatch loop, and return `Self`.
     ///
-    /// Creates the parent directory when needed (see [`up_frame_codec::ensure_socket_dir`]).
-    pub async fn bind(socket_path: impl AsRef<Path>) -> Result<Arc<Self>, UStatus> {
+    /// The accept task shares the listener table (`Arc<RwLock<…>>`), not an `Arc` of this
+    /// transport. Creates the parent directory when needed (see [`up_frame_codec::ensure_socket_dir`]).
+    ///
+    /// `bind` starts accepting immediately; `register_listener` is a later call. A publisher
+    /// that connects in that gap is not a dispatch error — an empty table silently drops
+    /// the message. Start the subscriber first because the publisher is a short burst.
+    pub async fn bind(socket_path: impl AsRef<Path>) -> Result<Self, UStatus> {
         let socket_path = socket_path.as_ref().to_path_buf();
         if let Some(parent) = socket_path.parent() {
             std::fs::create_dir_all(parent).map_err(|err| {
                 UStatus::fail_with_code(
                     UCode::INTERNAL,
-                    format!("failed to create socket directory {}: {err}", parent.display()),
+                    format!(
+                        "failed to create socket directory {}: {err}",
+                        parent.display()
+                    ),
                 )
             })?;
         }
@@ -105,28 +111,27 @@ impl UnixDomainSocketTransport {
             )
         })?;
 
-        let transport = Arc::new(Self {
-            socket_path: socket_path.clone(),
-            listeners: Arc::new(RwLock::new(HashSet::new())),
-            accepts_connections: true,
-        });
-
-        let dispatch_transport = Arc::clone(&transport);
+        let listeners = Arc::new(RwLock::new(HashSet::new()));
+        let listeners_for_accept = Arc::clone(&listeners);
         tokio::spawn(async move {
             loop {
                 let Ok((stream, _)) = listener.accept().await else {
                     continue;
                 };
-                let transport = Arc::clone(&dispatch_transport);
+                let listeners = Arc::clone(&listeners_for_accept);
                 tokio::spawn(async move {
                     if let Ok(message) = read_framed_message(stream).await {
-                        transport.dispatch(message).await;
+                        dispatch_to(&listeners, message).await;
                     }
                 });
             }
         });
 
-        Ok(transport)
+        Ok(Self {
+            socket_path,
+            listeners,
+            accepts_connections: true,
+        })
     }
 
     /// Socket path this transport is attached to.
@@ -134,32 +139,22 @@ impl UnixDomainSocketTransport {
         &self.socket_path
     }
 
-    async fn dispatch(&self, message: UMessage) {
-        let listeners = self.listeners.read().await;
-        for registered in listeners.iter() {
-            if registered.matches_msg(&message) {
-                registered.on_receive(message.clone()).await;
-            }
-        }
-    }
-
     async fn send_framed(&self, message: UMessage) -> Result<(), UStatus> {
         let framed = serialize_for_unix_socket(&message).map_err(|err| {
-            UStatus::fail_with_code(
-                UCode::INTERNAL,
-                format!("failed to frame UMessage: {err}"),
-            )
+            UStatus::fail_with_code(UCode::INTERNAL, format!("failed to frame UMessage: {err}"))
         })?;
 
-        let mut stream = UnixStream::connect(&self.socket_path).await.map_err(|err| {
-            UStatus::fail_with_code(
-                UCode::UNAVAILABLE,
-                format!(
-                    "failed to connect to Unix Domain Socket {}: {err}",
-                    self.socket_path.display()
-                ),
-            )
-        })?;
+        let mut stream = UnixStream::connect(&self.socket_path)
+            .await
+            .map_err(|err| {
+                UStatus::fail_with_code(
+                    UCode::UNAVAILABLE,
+                    format!(
+                        "failed to connect to Unix Domain Socket {}: {err}",
+                        self.socket_path.display()
+                    ),
+                )
+            })?;
 
         stream.write_all(&framed).await.map_err(|err| {
             UStatus::fail_with_code(UCode::INTERNAL, format!("failed to write message: {err}"))
@@ -169,6 +164,21 @@ impl UnixDomainSocketTransport {
         })?;
 
         Ok(())
+    }
+}
+
+/// Snapshot matching listeners, drop the table lock, then invoke callbacks.
+async fn dispatch_to(listeners: &RwLock<HashSet<RegisteredListener>>, message: UMessage) {
+    let matching: Vec<ComparableListener> = {
+        let guard = listeners.read().await;
+        guard
+            .iter()
+            .filter(|registered| registered.matches_msg_source(&message))
+            .map(|registered| registered.listener.clone())
+            .collect()
+    };
+    for listener in matching {
+        listener.on_receive(message.clone()).await;
     }
 }
 
@@ -267,6 +277,7 @@ async fn read_framed_message(mut stream: UnixStream) -> Result<UMessage, UStatus
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use up_rust::{LocalUriProvider, MockUListener, StaticUriProvider, UMessageBuilder};
 
     #[tokio::test]
@@ -282,11 +293,7 @@ mod tests {
 
         let server = UnixDomainSocketTransport::bind(&socket).await.unwrap();
         server
-            .register_listener(
-                &uri_provider.get_resource_uri(RESOURCE_ID),
-                None,
-                listener,
-            )
+            .register_listener(&uri_provider.get_resource_uri(RESOURCE_ID), None, listener)
             .await
             .unwrap();
 
@@ -302,6 +309,76 @@ mod tests {
             .await
             .unwrap();
 
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    struct HoldReadLockListener {
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl UListener for HoldReadLockListener {
+        async fn on_receive(&self, _msg: UMessage) {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+    }
+
+    struct NopListener;
+
+    #[async_trait]
+    impl UListener for NopListener {
+        async fn on_receive(&self, _msg: UMessage) {}
+    }
+
+    #[tokio::test]
+    async fn register_listener_is_not_blocked_by_in_flight_on_receive() {
+        let socket = std::env::temp_dir().join(format!(
+            "uprotocol_unix_domain_socket_lock_canary_{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&socket);
+        const RESOURCE_ID: u16 = 0x8001;
+        let uri_provider = StaticUriProvider::new("my_own_car", 0x1010, 0x01);
+        let source_filter = uri_provider.get_resource_uri(RESOURCE_ID);
+
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let holding = Arc::new(HoldReadLockListener {
+            entered: entered.clone(),
+            release: release.clone(),
+        });
+
+        let server = UnixDomainSocketTransport::bind(&socket).await.unwrap();
+        server
+            .register_listener(&source_filter, None, holding)
+            .await
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let client = UnixDomainSocketTransport::connect(&socket);
+        client
+            .send(
+                UMessageBuilder::publish(source_filter.clone())
+                    .build()
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        entered.notified().await;
+
+        tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            server.register_listener(&source_filter, None, Arc::new(NopListener)),
+        )
+        .await
+        .expect("register_listener waited on in-flight on_receive — drop the listener-table lock before on_receive")
+        .unwrap();
+
+        release.notify_one();
         let _ = std::fs::remove_file(&socket);
     }
 }

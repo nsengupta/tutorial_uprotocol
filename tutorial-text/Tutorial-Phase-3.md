@@ -1,7 +1,8 @@
 ### Phase 3: The Scaling Limit & The Zenoh Payoff
 
-> **Prerequisites:** Phase 2 (`tutorial-text/Tutorial-Phase-2.md`, code in `phases/02_uprotocol_semantics/`).  
+> **Prerequisites:** Phase 2 (`tutorial-text/Tutorial-Phase-2.md`, code in `phases/02_uprotocol_semantics/`).
 > **Active code:** `phases/03_zenoh_topology/` — copy-forward from Phase 2.
+> **Arriving from the official `up-rust` tutorial?** Start at the [README arrival box](../README.md#arriving-from-the-official-up-rust-tutorial), then run the three terminals in Chapter 6 / the README Phase 3 section.
 
 Phase 2 ended with an honest confession: Unix Domain Socket works for one publisher and one subscriber on a single Linux host, but it breaks the moment we need a second consumer — even on the same machine. Phase 3 swaps the wire for **Zenoh** and delivers the fan-out payoff that Phase 1's thermal logger narrative promised.
 
@@ -44,7 +45,7 @@ Same Linux host — Phase 2 Unix Domain Socket (still broken for fan-out)
 
 [Zenoh](https://zenoh.io/) is a data-space transport: publish/subscribe with location transparency and native fan-out. Eclipse uProtocol provides [`up-transport-zenoh`](https://github.com/eclipse-uprotocol/up-transport-zenoh-rust) — a `UTransport` implementation backed by Zenoh.
 
-Phase 2 introduced the **canonical layer map**. Phase 3 keeps every band above the wire; we swap only the L1 plugin and the wire. Crates under `phases/03_zenoh_topology/` still pin `up-rust = "0.9.0"`.
+Phase 2 introduced the **canonical layer map**. Phase 3 keeps every band above the wire; we swap only the L1 plugin and the wire. Crates under `phases/03_zenoh_topology/` pin **`up-rust = "0.9.0"`** and **`up-transport-zenoh = "=0.9.0"`** (exact). That transport release, with the committed `Cargo.lock`, keeps this demo on **Zenoh 1.9.0** — not a newer Zenoh line. See the repo README version-pins section.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -94,14 +95,14 @@ What the wire swap buys us (same L1/L2 APIs):
 - **Framing** — Zenoh owns message boundaries (`up-frame-codec` retires).
 - **Cross-host readiness** — same APIs; this demo still runs on one host.
 
-Every process opens a Zenoh session with the default **peer** config. How peers find each other — and why this demo does not run `zenohd` — is explained in Chapter 6.
+Every process opens a Zenoh session with the default **peer** config. How peers find each other — and when you might add `zenohd` — is explained in Chapter 6.
 
 #### What Zenoh is not
 
 - **Not a replacement for uProtocol** — it is the *wire plugin* for L1.
 - **Not a COVESA deep dive** — we use Zenoh as a data-space transport only.
 - **Not a multi-host requirement** — the Phase 3 demo stays on one Linux host.
-- **Not a mandatory broker** — see Chapter 6 (peer scouting vs `zenohd`).
+- **Not a mandatory broker** — see Chapter 6 (peer scouting vs optional `zenohd`).
 - **Not L3 uSubscription** — same-transport fan-out stays on L1 `register_listener` (Chapter 5).
 
 ---
@@ -185,7 +186,7 @@ The only application change in publisher and subscribers is **how the `UTranspor
 // let transport = UnixDomainSocketTransport::connect(&socket_path);
 
 // Phase 3 (Zenoh) — same construction on every process
-let transport: Arc<dyn UTransport> = Arc::new(
+let transport = Arc::new(
     UPTransportZenoh::builder(AUTHORITY_NAME)?
         .with_config(zenoh_config::Config::default())
         .build()
@@ -201,7 +202,7 @@ Everything after that — `SimplePublisher::publish`, `register_listener`, `on_r
 // up-battery-telemetry-publisher/src/main.rs — Phase 3
 use up_transport_zenoh::{zenoh_config, UPTransportZenoh};
 
-let transport: Arc<dyn UTransport> = Arc::new(
+let transport = Arc::new(
     UPTransportZenoh::builder(AUTHORITY_NAME)?
         .with_config(zenoh_config::Config::default())
         .build()
@@ -226,22 +227,21 @@ for i in 1..=EXPECTED_MESSAGE_COUNT {
 
 ```rust
 // up-telemetry-subscriber/src/main.rs — Phase 3
-let transport: Arc<dyn UTransport> = Arc::new(
-    UPTransportZenoh::builder(AUTHORITY_NAME)?
-        .with_config(zenoh_config::Config::default())
-        .build()
-        .await?,
-);
-transport
-    .register_listener(&source_filter, None, listener)
+let transport = UPTransportZenoh::builder(AUTHORITY_NAME)?
+    .with_config(zenoh_config::Config::default())
+    .build()
     .await?;
+transport
+    .register_listener(&source_filter, None, listener.clone())
+    .await?;
+// after Notify: unregister_listener from main, then exit
 ```
 
 The URI filter (`source_filter` with resource ID `0x8001`) works identically. Zenoh delivers matching publications to each subscriber process.
 
 #### Transport config — socket path replaced
 
-Phase 2 used `{cwd}/tmp/uprotocol_twin.sock`. Phase 3 uses `zenoh_config::Config::default()` — Zenoh **peer** mode with UDP multicast scouting, and no filesystem path. Chapter 6 explains what that mode means and why we do not start a `zenohd` router alongside the three binaries.
+Phase 2 used `{cwd}/tmp/uprotocol_twin.sock`. Phase 3 uses `zenoh_config::Config::default()` — Zenoh **peer** mode with UDP multicast scouting, and no filesystem path. Chapter 6 explains peer mode and when a router is useful.
 
 If we wanted an explicit remote endpoint (for example a router or a peer on another host):
 
@@ -302,14 +302,16 @@ Look back at the Chapter 2 layer map: the L3 band is present for orientation, an
 
 ### Chapter 6: Running the multi-subscriber demo
 
-#### Peer mode, routers, and why this demo skips `zenohd`
+#### Peer mode, routers, and when you need `zenohd`
 
 Zenoh can run processes in more than one role. Two that matter for reading our Phase 3 code:
 
 1. **Peer** — a process that both sends and receives in the Zenoh data space. With `zenoh_config::Config::default()`, each of our binaries opens a **peer** session. Peers can discover one another using Zenoh’s **UDP multicast scouting**: on a network that allows multicast, they find each other without a central process.
 2. **Router (`zenohd`)** — a long-running Zenoh process that **relays** traffic and helps clients that cannot (or should not) rely on multicast alone. Typical reasons to introduce a router: peers on different subnets or hosts where multicast does not cross the boundary; locked-down environments that block scouting; larger fleets where a stable rendezvous point is easier to operate than mesh discovery.
 
-Our demo does **not** start `zenohd`. The publisher, battery subscriber, and thermal subscriber all run on **one Linux host**, all with the default peer config. In that layout, multicast scouting is enough: the three sessions form a small peer mesh and Zenoh delivers publications to every matching `register_listener`. Adding a router would not change the uProtocol lesson of this chapter (fan-out via the same L1/L2 APIs after a wire swap). We mention routers so the absence of `zenohd` is a deliberate choice, not an omission.
+**How to run this demo:** do **not** start `zenohd` by default. The publisher, battery subscriber, and thermal subscriber all run on **one Linux host**, all with the default peer config. In that layout, multicast scouting is usually enough: the three sessions form a small peer mesh and Zenoh delivers publications to every matching `register_listener`. That is what the commands below assume.
+
+If subscribers print “listening” but never receive messages, try a local `zenohd` ([install](https://zenoh.io/docs/getting-started/installation/)) in a fourth terminal and re-run — that is a scouting/network issue, not a uProtocol one. Adding a router does not change this chapter’s lesson (fan-out via the same L1/L2 APIs after a wire swap).
 
 The optional snippet in Chapter 4 (`config.connect.endpoints = …`) is what we would use later if we *did* point at a router or a remote peer — it is not required for the run below.
 
@@ -329,6 +331,14 @@ cargo run --manifest-path phases/03_zenoh_topology/Cargo.toml -p up-battery-tele
 ```
 
 The publisher sends five messages (same as Phases 1–2). Both subscribers should receive all five. No process shares a socket, a listener table, or a filesystem path.
+
+After the fifth message each subscriber unregisters, prints that it is exiting, and drops its Zenoh session. You may then see a line like:
+
+```text
+[… ERROR zenoh::api::admin] Unable to publish link event: session closed
+```
+
+That is **expected**. Zenoh's admin path still tries to announce a link event while the session is already closing. It is not a failed delivery, a bad unregister, or a bug in this tutorial's code — ignore it.
 
 Build the whole workspace:
 
@@ -389,7 +399,7 @@ Notice the shape: both subscribers are **structurally identical**. They differ o
 - **Business logic survived the swap** — `SimplePublisher`, `UListener`, and `BatteryTelemetry` are unchanged.
 - **`UAttributes` is the single metadata level** — L2 assembles it from URI provider + `CallOptions` + `UPayload` format; Zenoh uses the embedded `UUri` for keys.
 - **Same-transport fan-out is Zenoh native pub/sub** — not L3 uSubscription (that service is for cross-authority / cross-transport interest).
-- **Zenoh peer mode on one host — no `zenohd`** — Chapter 6: peers scout via UDP multicast; a router would not change this chapter’s fan-out lesson.
+- **Zenoh peer mode on one host — no `zenohd` by default** — Chapter 6: peers scout via UDP multicast; start a router only if discovery fails.
 - **Phase 2 limits are resolved** — fan-out, address, listener ownership, framing, and cross-host readiness.
 
 Phase 3 proves that uProtocol's layer design pays off: **swap the wire, keep the application**.
@@ -413,7 +423,7 @@ These are configuration / later-service gaps, not a failure of the L1/L2 design 
 
 1. **L1 (`UTransport` / `UListener`) absorbs the transport swap.** The binaries changed the transport construction block. The business logic (publish loop, `on_receive`) is untouched.
 
-2. **Zenoh's data space enables fan-out where Unix Domain Socket could not.** A second subscriber attaches by running a new binary and registering the same URI filter — no socket sharing, no `SOCKET_PATH`. Chapter 6 covers peer mode vs `zenohd`.
+2. **Zenoh's data space enables fan-out where Unix Domain Socket could not.** A second subscriber attaches by running a new binary and registering the same URI filter — no socket sharing, no `SOCKET_PATH`. Chapter 6 covers peer mode vs optional `zenohd`.
 
 3. **One metadata level: `UAttributes`.** Assembled at L2 from `LocalUriProvider` / `StaticUriProvider`, `CallOptions`, and `UPayload` format. Zenoh turns the source `UUri` into a key expression.
 

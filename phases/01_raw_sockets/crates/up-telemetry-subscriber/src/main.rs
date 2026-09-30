@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
 
+//! Phase 1 subscriber: accept the socket and print decoded telemetry until you stop the process.
+
+use std::io::{Write, stdout};
 use tokio::io::AsyncReadExt;
 use tokio::net::UnixListener;
-use std::io::{Write, stdout};
 
 use up_frame_codec::deserialize_for_unix_socket;
 
@@ -63,7 +65,9 @@ async fn main() -> Result<(), anyhow::Error> {
 }
 
 fn unpack_bms_can_frame(can_data: &[u8]) -> (f32, i8) {
-    if can_data.len() < 2 { return (0.0, 0); }
+    if can_data.len() < 2 {
+        return (0.0, 0);
+    }
 
     // Unpack according to DBC rules
     let raw_soc = can_data[0];

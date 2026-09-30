@@ -59,3 +59,22 @@ pub fn deserialize_for_unix_socket(framed: &[u8]) -> Result<UMessage, anyhow::Er
 
     Ok(UMessage::parse_from_bytes(&framed[4..end])?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use up_rust::{UMessageBuilder, UPayloadFormat, UUri};
+
+    #[test]
+    fn framed_publish_roundtrip() {
+        let uri = UUri::try_from_parts("my_own_car", 0x1010, 1, 0x8001).unwrap();
+        let msg = UMessageBuilder::publish(uri)
+            .with_ttl(5000)
+            .build_with_payload(vec![1, 2, 3], UPayloadFormat::UPAYLOAD_FORMAT_RAW)
+            .unwrap();
+        let framed = serialize_for_unix_socket(&msg).unwrap();
+        let decoded = deserialize_for_unix_socket(&framed).unwrap();
+        let payload: Vec<u8> = decoded.payload.as_ref().unwrap().clone().into();
+        assert_eq!(payload, vec![1, 2, 3]);
+    }
+}

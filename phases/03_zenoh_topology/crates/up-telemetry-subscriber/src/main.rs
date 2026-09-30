@@ -1,20 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
 
+//! Phase 3 battery subscriber: same listener as Phase 2, registered on a Zenoh `UTransport`.
+
 use std::sync::{
-    atomic::{AtomicU32, Ordering},
     Arc,
+    atomic::{AtomicU32, Ordering},
 };
 
 use async_trait::async_trait;
 use tokio::sync::Notify;
-use up_bms_proto::constants::*;
 use up_bms_proto::BatteryTelemetry;
+use up_bms_proto::constants::*;
 use up_rust::{LocalUriProvider, StaticUriProvider, UListener, UMessage, UTransport};
-use up_transport_zenoh::{zenoh_config, UPTransportZenoh};
+use up_transport_zenoh::{UPTransportZenoh, zenoh_config};
 
 struct BatteryTelemetryListener {
-    received: Arc<AtomicU32>,
+    telemetry_seen: AtomicU32,
     shutdown: Arc<Notify>,
 }
 
@@ -23,10 +25,7 @@ impl UListener for BatteryTelemetryListener {
     async fn on_receive(&self, msg: UMessage) {
         match msg.extract_protobuf::<BatteryTelemetry>() {
             Ok(telemetry) => {
-                let count = self.received.fetch_add(1, Ordering::SeqCst) + 1;
-                log::trace!(
-                    "UListener::on_receive via transport dispatch (message {count}/{EXPECTED_MESSAGE_COUNT})"
-                );
+                let count = self.telemetry_seen.fetch_add(1, Ordering::SeqCst) + 1;
                 println!(
                     "[Battery telemetry subscriber] Processing incoming telemetry...\n\
                      -> State of Charge: {:.1}%\n\
@@ -44,47 +43,28 @@ impl UListener for BatteryTelemetryListener {
 }
 
 #[tokio::main]
-#[allow(unreachable_code, unused_variables)]
 async fn main() -> Result<(), anyhow::Error> {
-    env_logger::init();
-
-    let uri_provider = StaticUriProvider::new(
-        AUTHORITY_NAME,
-        PUBLISHER_UE_ID,
-        PUBLISHER_UE_VERSION,
-    );
+    let uri_provider =
+        StaticUriProvider::new(AUTHORITY_NAME, PUBLISHER_UE_ID, PUBLISHER_UE_VERSION);
     let source_filter = uri_provider.get_resource_uri(BATTERY_TELEMETRY_RESOURCE_ID);
 
-    let received = Arc::new(AtomicU32::new(0));
     let shutdown = Arc::new(Notify::new());
     let listener = Arc::new(BatteryTelemetryListener {
-        received,
+        telemetry_seen: AtomicU32::new(0),
         shutdown: shutdown.clone(),
     });
 
-    // Phase 3 — Zenoh-backed UTransport via up-transport-zenoh.
-    // Replaces Phase 2's UnixDomainSocketTransport::bind.
-    //
-    // Config::default() opens a Zenoh *peer* with UDP multicast scouting.
-    // Peers can discover each other without a zenohd router (peer-to-peer).
-    // An optional router is fine too; for a remote endpoint you can set:
-    //   config.connect.endpoints = vec!["tcp/<host>:7447".parse()?];
-    let transport: Arc<dyn UTransport> =
-        Arc::new(
-            UPTransportZenoh::builder(AUTHORITY_NAME)
-                .map_err(|e| anyhow::anyhow!("builder failed: {e}"))?
-                .with_config(zenoh_config::Config::default())
-                .build()
-                .await
-                .map_err(|e| anyhow::anyhow!("Zenoh transport build failed: {e}"))?,
-        );
+    // Same register_listener / on_receive as Phase 2. Only construction of the L1 plugin changes.
+    let transport = UPTransportZenoh::builder(AUTHORITY_NAME)
+        .map_err(|e| anyhow::anyhow!("builder failed: {e}"))?
+        .with_config(zenoh_config::Config::default())
+        .build()
+        .await
+        .map_err(|e| anyhow::anyhow!("Zenoh transport build failed: {e}"))?;
 
     transport
-        .register_listener(&source_filter, None, listener)
+        .register_listener(&source_filter, None, listener.clone())
         .await?;
-    log::trace!(
-        "registered UListener with source filter resource_id=0x{BATTERY_TELEMETRY_RESOURCE_ID:04x}"
-    );
 
     println!(
         "Battery telemetry subscriber listening (expecting {} messages)",
@@ -92,6 +72,10 @@ async fn main() -> Result<(), anyhow::Error> {
     );
 
     shutdown.notified().await;
+    // Zenoh send does not wait for this process's on_receive — handshake first, then unregister.
+    transport
+        .unregister_listener(&source_filter, None, listener)
+        .await?;
     println!("Received {EXPECTED_MESSAGE_COUNT} messages — exiting.");
 
     Ok(())

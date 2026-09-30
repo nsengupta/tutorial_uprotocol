@@ -1,18 +1,49 @@
 # uProtocol Tutorial — From Raw Sockets to Zenoh Fan-Out
 
+## Arriving from the official `up-rust` tutorial?
+
+The in-tree tutorial in [eclipse-uprotocol/up-rust](https://github.com/eclipse-uprotocol/up-rust) ends Phase 3 in **one process** (`LocalTransport`, two listeners). This repo continues that thread: **independent processes on Zenoh**.
+
+| Official Phase 3 | This repo, Phase 3 |
+|---|---|
+| One `cargo run` | Three terminals — both subscribers, then the publisher |
+| `LocalTransport` | `UPTransportZenoh` ([up-transport-zenoh-rust](https://github.com/eclipse-uprotocol/up-transport-zenoh-rust)) |
+
+**Same APIs:** `UTransport`, `UListener`, `SimplePublisher`. Only how you construct the L1 plugin changes.
+
+**Start here:** [how to run Phase 3](#phase-3--zenoh-topology-multi-subscriber-single-producer) and the walk-through in [`tutorial-text/Tutorial-Phase-3.md`](./tutorial-text/Tutorial-Phase-3.md). You do not need to re-do Phases 1–2 unless you want the Unix Domain Socket chapters on this pin.
+
+### Version pins (do not skip)
+
+This tutorial is written and verified against **crates.io 0.9**, not against `up-rust` `main` / SNAPSHOT:
+
+| Crate | Pin in this repo | Locked version (see `Cargo.lock`) |
+|---|---|---|
+| `up-rust` | `"0.9.0"` (all phases) | **0.9.0** |
+| `up-transport-zenoh` | `"=0.9.0"` (Phase 3 only) | **0.9.0** |
+| `zenoh` | **not** a direct app dependency | **1.9.0** (pulled by `up-transport-zenoh` 0.9.0) |
+
+Phase 3 apps pin **`up-transport-zenoh = "=0.9.0"`** (exact). That is deliberate: a looser `"0.9.0"` can resolve to `0.9.1` and pull a newer Zenoh stack (e.g. 1.10.x). We stay on **0.9.0 → Zenoh 1.9.0**, recorded in `phases/03_zenoh_topology/Cargo.lock`.
+
+Normal `cargo build` / `cargo run` already honor that lock when it is present. You do **not** need extra flags for the demo. (Optional CI-style check: `cargo build --locked --manifest-path phases/03_zenoh_topology/Cargo.toml` fails if the lock would change.)
+
+The official in-tree tutorial may already show newer call sites; this public Zenoh walk stays on the table above until you personally bump it.
+
+New to uProtocol? Begin at the [Prologue](#prologue) and Phase 1.
+
 ## Prologue
 
-The story begins when I had been exploring the world of Eclipse-SDV out of curiosity. This was an 
+The story begins when I had been exploring the world of Eclipse-SDV out of curiosity. This was an
 area hitherto completely unknown to me. Yet, I was drawn towards it. Why? I have captured the reasons in [this blog post](https://nsengupta.github.io/blog/why-explore-software-defined-vehicle/).
 
-One of the technologies that had captured my interest was [uProtocol](https://github.com/eclipse-uprotocol). I am familiar with the problem it was trying to solve (I have worked in the area of location-agnostic, multi-machine-architecture-friendly, network-carried, multiplex-able middleware for a good part of my career), but the domain was different. 
+One of the technologies that had captured my interest was [uProtocol](https://github.com/eclipse-uprotocol). I am familiar with the problem it was trying to solve (I have worked in the area of location-agnostic, multi-machine-architecture-friendly, network-carried, multiplex-able middleware for a good part of my career), but the domain was different.
 
 My aim was to understand the landscape well, and Eclipse SDV sites helped; so did the uProtocol repo, blogs (viz., Pete Le Vasseur's [Articles | plog](https://petelevasseur.com/articles/index.html)), and YouTube videos — but what I didn't find was a classical tutorial; a tutorial which helped a software developer to lay her/his hands on the code to solidify the understanding along with the specifications and examples, and helped create a mental map of _what was what_.
 
 So, I decided to write one myself. This tutorial follows how I approached learning uProtocol; hopefully, this will be useful for you too.
 
 - We start with **raw Unix Domain Sockets** and manually frame uProtocol `UMessage` bytes.
-- Then we refactor uProtocol's own L1 (`UTransport` / `UListener`) and L2 (`SimplePublisher` / `CallOptions`) abstractions — still on the same Unix Domain Socket wire. 
+- Then we refactor uProtocol's own L1 (`UTransport` / `UListener`) and L2 (`SimplePublisher` / `CallOptions`) abstractions — still on the same Unix Domain Socket wire.
 - Then, we **replace the transport with Zenoh**, add a second subscriber (the thermal logger mentioned in Phase 1), and prove that business logic survives the change of transport (from *Unix Domain Socket* to *Zenoh*).
 
 ## What we will learn
@@ -21,7 +52,7 @@ So, I decided to write one myself. This tutorial follows how I approached learni
 - Why stream transports (Unix Domain Sockets) need explicit length-prefix framing.
 - How uProtocol's L1 (`UTransport` / `UListener`) separates message moving from message handling.
 - How uProtocol's L2 (`SimplePublisher` / `CallOptions`) separates publishing intent from envelope construction.
-- Why Unix Domain Sockets fails for multi-process fan-out **even on one host** — and why a 
+- Why Unix Domain Sockets fails for multi-process fan-out **even on one host** — and why a
   data-space transport (Zenoh) fills that gap.
 - How swapping the L1 transport plugin leaves publisher and subscriber business logic unchanged.
 - How `UUri` metadata becomes first-class routing information in Zenoh (vs opaque bytes on a Unix Domain Socket).
@@ -66,7 +97,7 @@ Follow the tutorials for each phase, kept under [`tutorial-text/`](./tutorial-te
 
 Each phase is an independent Cargo workspace. Run all commands from the repo root.
 
-**Start order (all phases):** start every **subscriber first**, then the **publisher**. The publisher sends a short burst and exits; if no subscriber is listening yet, those messages are missed (especially visible in Phase 3’s multi-subscriber demo).
+**Start order (all phases):** start every **subscriber first**, then the **publisher**. The publisher sends a short burst and exits; if no subscriber is listening yet, those messages are missed (especially visible in Phase 3’s multi-subscriber demo). That order is how you run the demo — nothing in dispatch “waits” for a subscriber.
 
 ### Phase 1 — Raw sockets
 
@@ -82,6 +113,8 @@ cargo run --manifest-path phases/01_raw_sockets/Cargo.toml -p up-telemetry-subsc
 cargo run --manifest-path phases/01_raw_sockets/Cargo.toml -p up-battery-telemetry-publisher
 ```
 
+The publisher exits after five messages; the **subscriber keeps listening** until you stop it with **Ctrl+C** (raw socket server). Phase 2’s subscriber exits by itself after five messages.
+
 ### Phase 2 — uProtocol semantics
 
 Start the subscriber, then the publisher (two terminals):
@@ -89,16 +122,14 @@ Start the subscriber, then the publisher (two terminals):
 ```bash
 cargo build --manifest-path phases/02_uprotocol_semantics/Cargo.toml
 
-# Terminal 1 — subscriber (start this first)
+# Terminal 1 — subscriber (start this first; exits after 5 messages)
 cargo run --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-telemetry-subscriber
 
 # Terminal 2 — publisher (sends 5 messages, then exits)
 cargo run --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-battery-telemetry-publisher
 ```
 
-Optional — enable `RUST_LOG=trace` on both terminals to see `up-unix-domain-socket-transport` dispatch logs.
-
-Run the Phase 2 transport crate tests:
+Optional — run the Phase 2 transport crate tests:
 
 ```bash
 cargo test --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-unix-domain-socket-transport
@@ -106,7 +137,7 @@ cargo test --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-unix-d
 
 ### Phase 3 — Zenoh topology (multi-subscriber, single producer)
 
-**Start both subscribers before the publisher** (three terminals). If the publisher runs first, its five messages can finish before either subscriber has registered interest. Background on Zenoh peer mode and why this demo does not use `zenohd`: [`tutorial-text/Tutorial-Phase-3.md`](./tutorial-text/Tutorial-Phase-3.md) (Chapter 6).
+**Start both subscribers before the publisher** (three terminals). The apps use Zenoh **peer** mode with UDP multicast scouting — **no `zenohd` required** on a typical single Linux host. If the publisher runs first, its five messages can finish before either subscriber has registered interest. Peer mode vs optional router: [`tutorial-text/Tutorial-Phase-3.md`](./tutorial-text/Tutorial-Phase-3.md) (Chapter 6).
 
 ```bash
 cargo build --manifest-path phases/03_zenoh_topology/Cargo.toml
@@ -123,24 +154,27 @@ cargo run --manifest-path phases/03_zenoh_topology/Cargo.toml -p up-thermal-logg
 cargo run --manifest-path phases/03_zenoh_topology/Cargo.toml -p up-battery-telemetry-publisher
 ```
 
-Expected: both subscribers receive all five messages independently — no shared socket path, no broker in application code. The publisher and battery subscriber `on_receive` bodies are **identical** to Phase 2; only transport construction changed.
+Expected: both subscribers receive all five messages independently — no shared socket path, no broker in application code. The publisher and battery subscriber `on_receive` bodies are **identical** to Phase 2; only transport construction changed. A Zenoh `ERROR … session closed` line on subscriber exit is normal shutdown noise — see [`Tutorial-Phase-3.md`](./tutorial-text/Tutorial-Phase-3.md) Chapter 6.
+
+If subscribers stay silent (multicast blocked on your network/VM), start a local router in another terminal (`zenohd` — [install](https://zenoh.io/docs/getting-started/installation/)) and re-run the three processes.
 
 ### Prerequisites
 
 - Rust toolchain (edition 2024, in my set-up)
 - Linux (Unix Domain Sockets for Phases 1–2; Phase 3 demo also runs on Linux)
-- **Phase 3 only:** [Zenoh](https://zenoh.io/) via the `up-transport-zenoh` dependency (pulled by Cargo); no separate `zenohd` install for this demo
+- **All phases:** `up-rust` **0.9.0** (crates.io)
+- **Phase 3:** `up-transport-zenoh` **exactly 0.9.0**, which pulls **Zenoh 1.9.0** via the committed `Cargo.lock` (see [Version pins](#version-pins-do-not-skip)). No separate `zenohd` for the usual one-host peer-mode run; install a router only if peer discovery fails.
 - No prior uProtocol knowledge assumed
 
 ### Declaration
 
-I indeed have taken some help from [Cursor](https://cursor.com) and [Ralph](https://ralphy-server.fly.dev/) for writing draft code, but 
-the concept behind this tutorial, and the choice of the problem and solutions as well the final 
+I indeed have taken some help from [Cursor](https://cursor.com) and [Ralph](https://ralphy-server.fly.dev/) for writing draft code, but
+the concept behind this tutorial, and the choice of the problem and solutions as well the final
 documentation/code-structure/code are entirely mine.
 
 ## License
 
 This project is licensed under the [Apache License, Version 2.0](./LICENSE.txt).
 
-The entire tutorial text, notes, and sample Rust code in `phases/` are covered by that license 
+The entire tutorial text, notes, and sample Rust code in `phases/` are covered by that license
 unless noted otherwise.

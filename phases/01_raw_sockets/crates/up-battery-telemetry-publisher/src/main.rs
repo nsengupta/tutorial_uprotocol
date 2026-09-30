@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
 
+//! Phase 1 publisher: five packed telemetry frames on a Unix Domain Socket.
+
+use rand::Rng;
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
-use rand::Rng;
 use up_rust::{UMessageBuilder, UPayloadFormat, UUri};
 
 use up_frame_codec::serialize_for_unix_socket;
@@ -23,7 +25,10 @@ async fn main() -> Result<(), anyhow::Error> {
         let battery_pct: f32 = rng.random_range(75.0..78.9);
         let temp_c: i8 = rng.random_range(20..=25);
 
-        println!("Message {}: SoC = {:.1}%, Temp = {}°C", i, battery_pct, temp_c);
+        println!(
+            "Message {}: SoC = {:.1}%, Temp = {}°C",
+            i, battery_pct, temp_c
+        );
 
         let message = UMessageBuilder::publish(source_uri.clone())
             .with_ttl(5000)

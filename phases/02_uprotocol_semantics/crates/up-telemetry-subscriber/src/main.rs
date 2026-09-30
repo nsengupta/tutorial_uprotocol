@@ -1,20 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
 
+//! Phase 2 subscriber: bind the socket, receive five telemetry messages, then unregister and exit.
+
 use std::sync::{
-    atomic::{AtomicU32, Ordering},
     Arc,
+    atomic::{AtomicU32, Ordering},
 };
 
 use async_trait::async_trait;
 use tokio::sync::Notify;
-use up_bms_proto::constants::*;
 use up_bms_proto::BatteryTelemetry;
+use up_bms_proto::constants::*;
 use up_rust::{LocalUriProvider, StaticUriProvider, UListener, UMessage, UTransport};
 use up_unix_domain_socket_transport::UnixDomainSocketTransport;
 
 struct BatteryTelemetryListener {
-    received: Arc<AtomicU32>,
+    telemetry_seen: AtomicU32,
     shutdown: Arc<Notify>,
 }
 
@@ -23,10 +25,7 @@ impl UListener for BatteryTelemetryListener {
     async fn on_receive(&self, msg: UMessage) {
         match msg.extract_protobuf::<BatteryTelemetry>() {
             Ok(telemetry) => {
-                let count = self.received.fetch_add(1, Ordering::SeqCst) + 1;
-                log::trace!(
-                    "UListener::on_receive via UnixDomainSocketTransport dispatch (message {count}/{EXPECTED_MESSAGE_COUNT})"
-                );
+                let count = self.telemetry_seen.fetch_add(1, Ordering::SeqCst) + 1;
                 println!(
                     "[Battery telemetry subscriber] Processing incoming telemetry...\n\
                      -> State of Charge: {:.1}%\n\
@@ -45,34 +44,22 @@ impl UListener for BatteryTelemetryListener {
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    env_logger::init();
-
-    let uri_provider = StaticUriProvider::new(
-        AUTHORITY_NAME,
-        PUBLISHER_UE_ID,
-        PUBLISHER_UE_VERSION,
-    );
+    let uri_provider =
+        StaticUriProvider::new(AUTHORITY_NAME, PUBLISHER_UE_ID, PUBLISHER_UE_VERSION);
     let source_filter = uri_provider.get_resource_uri(BATTERY_TELEMETRY_RESOURCE_ID);
 
-    let received = Arc::new(AtomicU32::new(0));
     let shutdown = Arc::new(Notify::new());
     let listener = Arc::new(BatteryTelemetryListener {
-        received,
+        telemetry_seen: AtomicU32::new(0),
         shutdown: shutdown.clone(),
     });
 
     let socket_path = up_frame_codec::ensure_socket_dir()?;
+    // bind() starts the accept loop immediately; register_listener is next.
     let transport = UnixDomainSocketTransport::bind(&socket_path).await?;
-    log::trace!(
-        "using UnixDomainSocketTransport::bind → {} (L1 UTransport)",
-        socket_path.display()
-    );
     transport
-        .register_listener(&source_filter, None, listener)
+        .register_listener(&source_filter, None, listener.clone())
         .await?;
-    log::trace!(
-        "registered UListener with source filter resource_id=0x{BATTERY_TELEMETRY_RESOURCE_ID:04x}"
-    );
 
     println!(
         "Battery telemetry subscriber listening on: {} (expecting {} messages)",
@@ -81,6 +68,10 @@ async fn main() -> Result<(), anyhow::Error> {
     );
 
     shutdown.notified().await;
+    // Stop later deliveries from main — not from on_receive.
+    transport
+        .unregister_listener(&source_filter, None, listener)
+        .await?;
     println!("Received {EXPECTED_MESSAGE_COUNT} messages — exiting.");
 
     Ok(())

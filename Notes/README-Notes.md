@@ -74,7 +74,7 @@ cargo run --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-telemet
 # Terminal 2 — publisher (sends 5 messages, then exits)
 cargo run --manifest-path phases/02_uprotocol_semantics/Cargo.toml -p up-battery-telemetry-publisher
 ```
-Optional — trace logs confirming `up-unix-domain-socket-transport` path (`RUST_LOG=trace` on both).
+Optional — run the Phase 2 transport crate tests (`cargo test … -p up-unix-domain-socket-transport`).
 
 Test the Phase 2 transport crate:
 

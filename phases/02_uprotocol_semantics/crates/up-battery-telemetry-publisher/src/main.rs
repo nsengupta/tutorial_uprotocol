@@ -1,23 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Nirmalya Sengupta (https://github.com/nsengupta)
 
+//! Phase 2 publisher: five battery telemetry messages over Unix Domain Socket via `SimplePublisher`.
+
 use std::sync::Arc;
 
-// Phase-1 used ttl: Some(5000) via UMessageBuilder. Here we pass the same TTL
-// through CallOptions, which SimplePublisher converts into UAttributes.ttl.
-// See: https://docs.rs/up-rust/latest/up_rust/communication/struct.CallOptions.html
-
 use rand::Rng;
-use up_bms_proto::constants::*;
 use up_bms_proto::BatteryTelemetry;
+use up_bms_proto::constants::*;
+use up_rust::StaticUriProvider;
 use up_rust::communication::{CallOptions, Publisher, SimplePublisher, UPayload};
-use up_rust::{StaticUriProvider, UTransport};
 use up_unix_domain_socket_transport::UnixDomainSocketTransport;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    env_logger::init();
-
     println!("--- Battery telemetry publisher starting ---");
 
     let uri_provider = Arc::new(StaticUriProvider::new(
@@ -26,12 +22,8 @@ async fn main() -> Result<(), anyhow::Error> {
         PUBLISHER_UE_VERSION,
     ));
     let socket_path = up_frame_codec::socket_path()?;
-    let transport: Arc<dyn UTransport> =
-        UnixDomainSocketTransport::connect(&socket_path);
-    log::trace!(
-        "using UnixDomainSocketTransport::connect → {} (L1 UTransport)",
-        socket_path.display()
-    );
+    // L1 plugin: wrap `Self` in `Arc` here — `SimplePublisher` needs a shared handle.
+    let transport = Arc::new(UnixDomainSocketTransport::connect(&socket_path));
     let publisher = SimplePublisher::new(transport, uri_provider);
 
     let mut rng = rand::rng();
@@ -50,14 +42,10 @@ async fn main() -> Result<(), anyhow::Error> {
 
         // L2: UPayload wraps protobuf bytes + format for SimplePublisher.
         let payload = UPayload::try_from_protobuf(telemetry)?;
-        log::trace!(
-            "SimplePublisher::publish → UTransport::send (resource_id=0x{BATTERY_TELEMETRY_RESOURCE_ID:04x})"
-        );
         publisher
             .publish(
                 BATTERY_TELEMETRY_RESOURCE_ID,
-                // `CallOptions::for_publish(ttl, priority, sink)`.
-                // - ttl (ms): Some(5000) matches Phase 1's explicit TTL of 5 seconds.
+                // Same 5 s window as Phase 1's `with_ttl(5000)`.
                 CallOptions::for_publish(Some(5000), None, None),
                 Some(payload),
             )
